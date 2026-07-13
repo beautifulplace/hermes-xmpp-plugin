@@ -120,6 +120,7 @@ class XMPPAdapter(BasePlatformAdapter):
         self.client: Optional[ClientXMPP] = None
         self._http = httpx.AsyncClient(timeout=300.0, follow_redirects=True)
         self._keepalive_task: Optional[asyncio.Task] = None
+        self._avatar_republish_task: Optional[asyncio.Task] = None
         self._last_activity: float = 0.0
         self._ping_interval = 30.0
         self._ping_timeout = 10.0
@@ -252,6 +253,20 @@ class XMPPAdapter(BasePlatformAdapter):
         if self.avatar_path:
             logger.info("XMPP: publishing avatar from %s", self.avatar_path)
             await self._publish_avatar()
+            self._schedule_avatar_republish()
+
+    def _schedule_avatar_republish(self) -> None:
+        """Schedule a one-time avatar republish in case the first attempt did not propagate."""
+        if self._avatar_republish_task and not self._avatar_republish_task.done():
+            return
+
+        async def _republish_after_delay() -> None:
+            await asyncio.sleep(60.0)
+            if self.is_connected and self.avatar_path:
+                logger.info("XMPP: republishing avatar from %s", self.avatar_path)
+                await self._publish_avatar()
+
+        self._avatar_republish_task = asyncio.create_task(_republish_after_delay())
 
     async def _keepalive_loop(self) -> None:
         while self.is_connected:
@@ -636,7 +651,21 @@ class XMPPAdapter(BasePlatformAdapter):
             img.save(png_buffer, format="PNG", optimize=True)
             data = png_buffer.getvalue()
 
-            # Try PEP/XEP-0084 first (best effort, can hang on some servers).
+            # Always publish vCard avatar (XEP-0153); most clients use this.
+            vcard_avatar = self.client.plugin.get("xep_0153", None)
+            if vcard_avatar is not None:
+                try:
+                    await asyncio.wait_for(
+                        vcard_avatar.set_avatar(avatar=data, mtype="image/png"),
+                        timeout=15.0,
+                    )
+                    logger.info("XMPP: published vCard avatar (%d bytes, %dx%d)", len(data), img.width, img.height)
+                except Exception as exc:
+                    logger.warning("XMPP: vCard avatar publish failed: %s", exc)
+            else:
+                logger.warning("XMPP: xep_0153 plugin not available")
+
+            # Try PEP/XEP-0084 second (best effort, can hang on some servers).
             pep_avatar = self.client.plugin.get("xep_0084", None)
             if pep_avatar is not None:
                 try:
@@ -651,21 +680,9 @@ class XMPPAdapter(BasePlatformAdapter):
                     }), timeout=5.0)
                     logger.info("XMPP: published PEP avatar id=%s (%d bytes, %dx%d)", avatar_id[:16], len(data), img.width, img.height)
                 except Exception as exc:
-                    logger.debug("XMPP: PEP avatar publish skipped/failed: %s", exc)
-
-            # Always publish vCard avatar (XEP-0153); most clients use this.
-            vcard_avatar = self.client.plugin.get("xep_0153", None)
-            if vcard_avatar is not None:
-                try:
-                    await asyncio.wait_for(
-                        vcard_avatar.set_avatar(avatar=data, mtype="image/png"),
-                        timeout=15.0,
-                    )
-                    logger.info("XMPP: published vCard avatar (%d bytes, %dx%d)", len(data), img.width, img.height)
-                except Exception as exc:
-                    logger.debug("XMPP: vCard avatar publish did not confirm quickly: %s", exc)
+                    logger.warning("XMPP: PEP avatar publish failed: %s", exc)
             else:
-                logger.warning("XMPP: xep_0153 plugin not available")
+                logger.debug("XMPP: xep_0084 plugin not available")
         except Exception as exc:
             logger.warning("XMPP: failed to publish avatar: %s", exc, exc_info=True)
 
