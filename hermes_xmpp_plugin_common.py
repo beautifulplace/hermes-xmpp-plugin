@@ -14,7 +14,6 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
-
 DEFAULT_HERMES_HOME = Path.home() / ".hermes"
 
 
@@ -266,7 +265,6 @@ def remove_xmpp_config(config_text: str) -> str:
             continue
         if skip:
             indent = len(line) - len(line.lstrip())
-            xmpp_indent = len(lines[start + block.index(line)]) - len(stripped) if False else 2
             if stripped and indent <= 2:
                 skip = False
             else:
