@@ -69,20 +69,46 @@ def copy_plugin(plugin_src: Path, plugin_dest: Path, force: bool) -> None:
     shutil.copytree(plugin_src, plugin_dest)
 
 
-def install_dependencies(python: Path, only_required: bool) -> None:
+def install_dependencies(python: Path, plugin_dest: Path, only_required: bool) -> None:
+    """Ensure plugin dependencies are importable by the gateway.
+
+    First checks whether each dependency is already available in the gateway's
+    Python environment. Any missing packages are installed into a ``deps``
+    subdirectory under the plugin so we do not modify externally-managed Python
+    installations (uv, system PEP-668, etc.).
+    """
+    deps_dir = plugin_dest / "deps"
+    deps_dir.mkdir(parents=True, exist_ok=True)
+
     to_install = []
     for pip_name, import_name, required in DEPENDENCIES:
         if only_required and not required:
             continue
         try:
-            __import__(import_name)
+            subprocess.run(
+                [str(python), "-c", f"import {import_name}"],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
             print(f"  {pip_name}: already installed")
-        except ImportError:
+        except subprocess.CalledProcessError:
             to_install.append(pip_name)
 
     if to_install:
-        print(f"Installing missing dependencies with {python}: {', '.join(to_install)}")
-        subprocess.run([str(python), "-m", "pip", "install", *to_install], check=True)
+        print(
+            f"Installing missing dependencies into {deps_dir} with {python}: "
+            f"{', '.join(to_install)}"
+        )
+        subprocess.run(
+            [
+                str(python), "-m", "pip", "install",
+                "--target", str(deps_dir),
+                "--upgrade",
+                *to_install,
+            ],
+            check=True,
+        )
     else:
         print("All dependencies are satisfied.")
 
@@ -176,7 +202,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     print(f"Python interpreter: {python}")
 
     copy_plugin(plugin_src, plugin_dest, force=args.force)
-    install_dependencies(python, only_required=args.only_required_deps)
+    install_dependencies(python, plugin_dest, only_required=args.only_required_deps)
 
     if config_path.exists():
         backup_path = backup_file(config_path, ".install-backup")
