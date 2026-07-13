@@ -7,16 +7,11 @@ import tempfile
 import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
 import httpx
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from PIL import Image
-from slixmpp import ClientXMPP, JID
-from slixmpp.plugins.base import register_plugin
-from slixmpp.stanza import Message
-
 from gateway.config import Platform
 from gateway.platforms.base import (
     BasePlatformAdapter,
@@ -26,6 +21,10 @@ from gateway.platforms.base import (
     cache_media_bytes,
     validate_inbound_media_size,
 )
+from PIL import Image
+from slixmpp import JID, ClientXMPP
+from slixmpp.plugins.base import register_plugin
+from slixmpp.stanza import Message
 
 logger = logging.getLogger(__name__)
 
@@ -402,7 +401,6 @@ class XMPPAdapter(BasePlatformAdapter):
                 try:
                     ns_sshare = "urn:xmpp:sfs:0"
                     ns_share  = "urn:xmpp:share:1"
-                    ns_media  = "urn:xmpp:media-element:0"
                     ns_oob    = "jabber:x:oob"
 
                     sfs = ET.Element("{" + ns_sshare + "}file-sharing")
@@ -460,11 +458,9 @@ class XMPPAdapter(BasePlatformAdapter):
 
             ext_map = {"m4a": ".m4a", "mp4": ".m4a", "opus": ".opus", "ogg": ".ogg", "oga": ".oga"}
             codec_map = {"m4a": "aac", "mp4": "aac", "opus": "libopus", "ogg": "libopus", "oga": "libopus"}
-            mime_map = {"m4a": "audio/mp4", "mp4": "audio/mp4", "opus": "audio/opus", "ogg": "audio/ogg", "oga": "audio/ogg"}
 
             ext = ext_map[fmt]
             codec = codec_map[fmt]
-            mime = mime_map[fmt]
             out_path = mp3_path.with_suffix(ext)
 
             args = ["ffmpeg", "-y", "-i", str(mp3_path), "-c:a", codec, "-b:a", "24k"]
