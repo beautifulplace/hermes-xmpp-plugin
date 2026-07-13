@@ -193,7 +193,7 @@ def disable_plugin(config_text: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def add_default_xmpp_config(config_text: str) -> str:
+def add_default_xmpp_config(config_text: str, jid: str = "", password: str = "", avatar_path: str = "") -> str:
     """Add a default platforms.xmpp block if one does not exist."""
     if re.search(r"^platforms:\s*$", config_text, re.MULTILINE):
         # platforms block exists.
@@ -202,19 +202,17 @@ def add_default_xmpp_config(config_text: str) -> str:
         if re.search(r"^\s+xmpp:\s*$", block, re.MULTILINE):
             return config_text
 
-        default_xmpp = """\n  xmpp:
+        default_xmpp = f"""\n  xmpp:
     enabled: true
-    user_jid: ""
-    password: ""
-    server: ""
-    port: 5222
+    user_jid: "{jid}"
+    password: "{password}"
     omemo_enabled: true
     omemo_allow_untrusted: true
     typing_indicator: true
     voice_reply: false
     voice_model: en-GB-SoniaNeural
     voice_format: m4a
-    avatar_path: ""
+    avatar_path: "{avatar_path}"
     home_channel: ""
     allow_all_users: false
 """
@@ -226,20 +224,18 @@ def add_default_xmpp_config(config_text: str) -> str:
             flags=re.MULTILINE,
         )
 
-    default_block = """platforms:
+    default_block = f"""platforms:
   xmpp:
     enabled: true
-    user_jid: ""
-    password: ""
-    server: ""
-    port: 5222
+    user_jid: "{jid}"
+    password: "{password}"
     omemo_enabled: true
     omemo_allow_untrusted: true
     typing_indicator: true
     voice_reply: false
     voice_model: en-GB-SoniaNeural
     voice_format: m4a
-    avatar_path: ""
+    avatar_path: "{avatar_path}"
     home_channel: ""
     allow_all_users: false
 """
