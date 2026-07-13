@@ -32,8 +32,6 @@ def get_hermes_home(cli_value: Optional[str] = None) -> Path:
     else:
         path = DEFAULT_HERMES_HOME
 
-    if not path.exists():
-        raise FileNotFoundError(f"Hermes home not found: {path}")
     return path
 
 
