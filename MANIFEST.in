@@ -1,0 +1,8 @@
+include hermes_xmpp_plugin_common.py
+include install_xmpp_plugin.py
+include uninstall_xmpp_plugin.py
+include README.md
+include LICENSE
+include pyproject.toml
+include requirements.txt
+recursive-include xmpp_plugin_source *.py *.yaml *.md
