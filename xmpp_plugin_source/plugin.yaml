@@ -1,0 +1,66 @@
+name: xmpp-platform
+label: XMPP
+kind: platform
+version: 1.0.0
+description: >
+  XMPP gateway adapter for Hermes Agent.
+  Connects to an XMPP server and relays messages between XMPP users
+  and the Hermes agent. Optional OMEMO end-to-end encryption is
+  supported when slixmpp-omemo is installed.
+author: Nous Research
+requires_env:
+  - name: XMPP_USER_JID
+    description: "XMPP JID for the bot account (e.g. hermes@example.com)"
+    prompt: "XMPP JID"
+    password: false
+  - name: XMPP_PASSWORD
+    description: "Password for the XMPP account"
+    prompt: "XMPP password"
+    password: true
+optional_env:
+  - name: XMPP_SERVER
+    description: "XMPP server hostname override (optional, uses JID domain if empty)"
+    prompt: "XMPP server hostname"
+    password: false
+  - name: XMPP_PORT
+    description: "XMPP server port (default: 5222)"
+    prompt: "XMPP port"
+    password: false
+  - name: XMPP_ALLOWED_USERS
+    description: "Comma-separated JIDs allowed to talk to the bot"
+    prompt: "Allowed users (comma-separated)"
+    password: false
+  - name: XMPP_ALLOW_ALL_USERS
+    description: "Allow any XMPP user to talk to the bot (dev only)"
+    prompt: "Allow all users? (true/false)"
+    password: false
+  - name: XMPP_HOME_CHANNEL
+    description: "Default JID for cron / notification delivery"
+    prompt: "XMPP home JID"
+    password: false
+  - name: XMPP_OMEMO_ENABLED
+    description: "Enable OMEMO end-to-end encryption (requires slixmpp-omemo)"
+    prompt: "Enable OMEMO? (true/false)"
+    password: false
+  - name: XMPP_OMEMO_ALLOW_UNTRUSTED
+    description: "Auto-trust new OMEMO devices (default true). Set false to require manual trust."
+    prompt: "Auto-trust new OMEMO devices? (true/false)"
+    password: false
+  - name: XMPP_AVATAR_PATH
+    description: "Path to an image file to publish as the bot's XMPP avatar (optional)"
+  - name: XMPP_VOICE_REPLY
+    description: "Send an inline voice message for every text reply (requires edge-tts and ffmpeg)"
+    prompt: "Enable voice replies? (true/false)"
+    password: false
+  - name: XMPP_VOICE_MODEL
+    description: "edge-tts voice model (default: en-GB-SoniaNeural)"
+    prompt: "edge-tts voice model"
+    password: false
+  - name: XMPP_VOICE_FORMAT
+    description: "Voice container format: m4a (default), opus, ogg, oga"
+    prompt: "Voice format (m4a/opus/ogg/oga)"
+    password: false
+    prompt: "Avatar image path (optional)"
+    password: false
+install_hint: "pip install slixmpp"
+omemo_install_hint: "pip install slixmpp-omemo"
