@@ -588,35 +588,21 @@ class XMPPAdapter(BasePlatformAdapter):
         try:
             parsed = urlparse(url)
             fragment = parsed.fragment
-            logger.info("XMPP: aesgcm fragment len=%s url=%r", len(fragment) if fragment else 0, url)
             if not fragment or len(fragment) != 88:
                 logger.warning("XMPP: invalid aesgcm fragment length")
                 return None
             iv = bytes.fromhex(fragment[:24])
             key = bytes.fromhex(fragment[24:])
             https_url = f"https://{parsed.netloc}{parsed.path}"
-            logger.info("XMPP: downloading aesgcm ciphertext from %s", https_url)
-            resp = await self._http.get(https_url)
-            resp.raise_for_status()
-            ciphertext = resp.content
-            logger.info("XMPP: ciphertext size %d bytes", len(ciphertext))
+            async with self._http as client:
+                resp = await client.get(https_url)
+                resp.raise_for_status()
+                ciphertext = resp.content
             aesgcm = AESGCM(key)
             plaintext = aesgcm.decrypt(iv, ciphertext, None)
-            logger.info("XMPP: plaintext size %d bytes", len(plaintext))
             return plaintext
         except Exception as exc:
             logger.warning("XMPP: failed to decrypt aesgcm %s: %s", url, exc)
-            return None
-
-    async def _download_url(self, url: str) -> Optional[bytes]:
-        try:
-            if url.startswith("aesgcm://"):
-                return await self._download_aesgcm(url)
-            resp = await self._http.get(url)
-            resp.raise_for_status()
-            return resp.content
-        except Exception as exc:
-            logger.warning("XMPP: failed to download %s: %s", url, exc)
             return None
 
     def _extract_url(self, text: str) -> Optional[str]:
@@ -736,7 +722,6 @@ class XMPPAdapter(BasePlatformAdapter):
             except Exception:
                 pass
 
-            logger.info("XMPP: decrypted message body (%d chars): %r", len(body), body[:200])
             url: Optional[str] = None
             try:
                 oob = msg.xml.find(".//{jabber:x:oob}x")
@@ -746,20 +731,18 @@ class XMPPAdapter(BasePlatformAdapter):
                         url = url_el.text.strip()
             except Exception:
                 pass
-            logger.info("XMPP: OOB URL=%r", url)
             if not url:
                 url = self._extract_url(body)
-                if url:
-                    logger.info("XMPP: extracted URL from body via regex: %r", url)
+
             media_path: Optional[str] = None
             msg_type = MessageType.TEXT
             if url:
-                logger.info("XMPP: detected URL in message: %s", url)
+                logger.debug("XMPP: detected URL in message: %s", url)
                 if url.startswith("aesgcm://"):
                     data = await self._download_aesgcm(url)
                 else:
                     data = await self._download_url(url)
-                logger.info("XMPP: downloaded %d bytes from %s", len(data) if data else 0, url)
+                logger.debug("XMPP: downloaded %d bytes from %s", len(data) if data else 0, url)
                 if data:
                     if _is_audio_url(url):
                         msg_type = MessageType.AUDIO
@@ -767,16 +750,20 @@ class XMPPAdapter(BasePlatformAdapter):
                     else:
                         msg_type = MessageType.PHOTO
                         media_path = self._cache_media(data, "image")
-                    if media_path:
-                        from pathlib import Path as _Path
-                        p = _Path(media_path)
-                        logger.info("XMPP: cached file exists=%s size=%s", p.exists(), p.stat().st_size if p.exists() else 0)
-                        logger.info("XMPP: plaintext magic=%s", data[:8].hex())
                 else:
                     logger.warning("XMPP: failed to download media from %s", url)
                     msg_type = MessageType.TEXT
 
-                logger.info("XMPP: cached media path=%s", media_path)
+                logger.debug("XMPP: cached media path=%s", media_path)
+
+            # If media was cached, replace the URL in the body with the local
+            # path so downstream tools analyse the actual file, not the link.
+            display_text = body
+            if media_path and url:
+                display_text = body.replace(url, media_path)
+                if display_text == body:
+                    # URL not in body (e.g. only in oob); use a direct note.
+                    display_text = f"{body}\n[Attached media: {media_path}]".strip()
 
             source = self.build_source(
                 chat_id=sender_bare,
@@ -788,7 +775,7 @@ class XMPPAdapter(BasePlatformAdapter):
             )
 
             event = MessageEvent(
-                text=body,
+                text=display_text,
                 message_type=msg_type,
                 source=source,
                 raw_message=msg,
