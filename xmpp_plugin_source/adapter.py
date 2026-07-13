@@ -181,9 +181,23 @@ class XMPPAdapter(BasePlatformAdapter):
         try:
             self.client = ClientXMPP(self.user_jid, self.password)
             self.client.use_message_ids = True
+            # Set a fixed resource and service discovery identity so XMPP clients
+            # label the account as "Hermes" in tooltips/contact lists.
+            if "/" not in self.user_jid:
+                self.client.boundjid.resource = "Hermes"
+            self.client.register_plugin("xep_0030")  # Service discovery
+            try:
+                disco = self.client.plugin.get("xep_0030")
+                if disco is not None:
+                    disco.add_identity(
+                        category="client",
+                        itype="bot",
+                        name="Hermes",
+                    )
+            except Exception as exc:
+                logger.debug("XMPP: could not set disco identity: %s", exc)
 
             self.client.register_plugin("xep_0004")  # Data Forms
-            self.client.register_plugin("xep_0030")  # Service discovery
             self.client.register_plugin("xep_0060")  # PubSub
             self.client.register_plugin("xep_0066")  # Out of Band Data
             self.client.register_plugin("xep_0054")  # vcard-temp
