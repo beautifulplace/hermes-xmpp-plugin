@@ -35,14 +35,14 @@ def remove_plugin(plugin_dest: Path) -> None:
     shutil.rmtree(plugin_dest)
 
 
-def disable_plugin_in_config(config_path: Path, remove_config: bool) -> None:
+def disable_plugin_in_config(config_path: Path, keep_config: bool) -> None:
     if not config_path.exists():
         print(f"Config not found at {config_path}; skipping config update")
         return
 
     config_text = config_path.read_text()
     config_text = disable_plugin(config_text)
-    if remove_config:
+    if not keep_config:
         config_text = remove_xmpp_config(config_text)
     config_path.write_text(config_text)
 
@@ -62,9 +62,9 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Hermes profile to target (default: active profile or default)",
     )
     parser.add_argument(
-        "--remove-config",
+        "--keep-config",
         action="store_true",
-        help="Also remove the platforms.xmpp block from config.yaml",
+        help="Keep the platforms.xmpp block in config.yaml (default: remove it)",
     )
     return parser.parse_args(argv)
 
@@ -91,7 +91,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if config_path.exists():
         backup_path = backup_file(config_path, ".uninstall-backup")
         print(f"Backed up config to {backup_path}")
-        disable_plugin_in_config(config_path, remove_config=args.remove_config)
+        disable_plugin_in_config(config_path, keep_config=args.keep_config)
 
     print("\nUninstall complete.")
     print("Restart the Hermes gateway for changes to take effect:")
