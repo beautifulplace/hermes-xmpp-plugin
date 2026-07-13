@@ -1,0 +1,11 @@
+# Core dependencies for the Hermes XMPP platform plugin
+slixmpp
+httpx
+Pillow
+cryptography
+
+# Optional: OMEMO end-to-end encryption
+# slixmpp-omemo
+
+# Optional: voice replies
+# edge-tts

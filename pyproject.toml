@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-xmpp-plugin"
+version = "1.0.0"
+description = "XMPP gateway adapter for Hermes Agent with optional OMEMO encryption"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Nous Research"},
+]
+maintainers = [
+    {name = "Nous Research"},
+]
+requires-python = ">=3.10"
+keywords = ["hermes", "xmpp", "omemo", "chatbot", "gateway", "messaging"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications :: Chat",
+    "Topic :: Internet :: XMPP",
+]
+dependencies = [
+    "slixmpp",
+    "httpx",
+    "Pillow",
+    "cryptography",
+]
+
+[project.optional-dependencies]
+omemo = ["slixmpp-omemo"]
+voice = ["edge-tts"]
+all = ["slixmpp-omemo", "edge-tts"]
+
+[project.urls]
+Homepage = "https://github.com/NousResearch/hermes-agent"
+Documentation = "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/"
+Repository = "https://github.com/NousResearch/hermes-xmpp-plugin"
+Issues = "https://github.com/NousResearch/hermes-xmpp-plugin/issues"
+
+[project.scripts]
+install-hermes-xmpp-plugin = "install_xmpp_plugin:main"
+uninstall-hermes-xmpp-plugin = "uninstall_xmpp_plugin:main"
+
+[tool.setuptools]
+py-modules = [
+    "install_xmpp_plugin",
+    "uninstall_xmpp_plugin",
+    "hermes_xmpp_plugin_common",
+]
+
+[tool.setuptools.package-data]
+"*" = ["*.py", "*.yaml", "*.md"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
