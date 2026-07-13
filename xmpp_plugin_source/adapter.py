@@ -179,11 +179,27 @@ class XMPPAdapter(BasePlatformAdapter):
         self._omemo_ready_event.clear()
 
         try:
-            self.client = ClientXMPP(self.user_jid, self.password)
+            # Use a fixed Hermes resource if none was provided, and advertise
+            # a service-discovery identity so XMPP clients label the account
+            # as "Hermes" in tooltips/contact lists.
+            jid_str = self.user_jid
+            if "/" not in jid_str:
+                jid_str = f"{jid_str}/Hermes"
+            self.client = ClientXMPP(jid_str, self.password)
             self.client.use_message_ids = True
+            self.client.register_plugin("xep_0030")  # Service discovery
+            try:
+                disco = self.client.plugin.get("xep_0030")
+                if disco is not None:
+                    disco.add_identity(
+                        category="client",
+                        itype="pc",
+                        name="Hermes",
+                    )
+            except Exception as exc:
+                logger.debug("XMPP: could not set disco identity: %s", exc)
 
             self.client.register_plugin("xep_0004")  # Data Forms
-            self.client.register_plugin("xep_0030")  # Service discovery
             self.client.register_plugin("xep_0060")  # PubSub
             self.client.register_plugin("xep_0066")  # Out of Band Data
             self.client.register_plugin("xep_0054")  # vcard-temp
