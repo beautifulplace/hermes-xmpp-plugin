@@ -9,11 +9,12 @@ virtual environment.
 from __future__ import annotations
 
 import argparse
+import getpass
 import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import NoReturn, Optional
 
 from hermes_xmpp_plugin_common import (
     add_default_xmpp_config,
@@ -43,7 +44,7 @@ DEPENDENCIES: list[tuple[str, str, bool]] = [
 ]
 
 
-def fail(message: str) -> None:
+def fail(message: str) -> NoReturn:
     print(f"ERROR: {message}", file=sys.stderr)
     sys.exit(1)
 
@@ -113,7 +114,13 @@ def install_dependencies(python: Path, plugin_dest: Path, only_required: bool) -
         print("All dependencies are satisfied.")
 
 
-def enable_plugin_in_config(config_path: Path, add_defaults: bool) -> None:
+def enable_plugin_in_config(
+    config_path: Path,
+    add_defaults: bool,
+    jid: str = "",
+    password: str = "",
+    avatar_path: str = "",
+) -> None:
     if not config_path.exists():
         print(f"Config not found at {config_path}; creating minimal config")
         config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -123,9 +130,67 @@ def enable_plugin_in_config(config_path: Path, add_defaults: bool) -> None:
 
     config_text = enable_plugin(config_text)
     if add_defaults:
-        config_text = add_default_xmpp_config(config_text)
+        config_text = add_default_xmpp_config(
+            config_text, jid=jid, password=password, avatar_path=avatar_path
+        )
 
     config_path.write_text(config_text)
+
+
+def prompt_xmpp_credentials(args: argparse.Namespace) -> tuple[str, str, str]:
+    """Return (jid, password, avatar_path), prompting for any missing values."""
+    print("\nXMPP account setup")
+    print("-" * 40)
+
+    jid = args.jid or input("XMPP JID (e.g. hermes@example.com): ").strip()
+    while not jid:
+        print("JID is required.")
+        jid = input("XMPP JID (e.g. hermes@example.com): ").strip()
+
+    if args.password:
+        password = args.password
+    else:
+        password = getpass.getpass("XMPP password: ")
+        while not password:
+            print("Password is required.")
+            password = getpass.getpass("XMPP password: ")
+
+    avatar_path = args.avatar_path or ""
+    if not avatar_path:
+        print(
+            "\nOptional avatar image. Recommended: a square PNG or JPEG, "
+            "at least 480x480 pixels. The plugin will crop to a centered "
+            "square and resize to 480x480."
+        )
+        avatar_path = input("Avatar file path (leave blank for none): ").strip()
+
+    return jid, password, avatar_path
+
+
+def append_env_credentials(env_path: Path, jid: str, password: str) -> None:
+    """Append XMPP credentials to the Hermes .env file if not already present."""
+    lines: list[str] = []
+    if env_path.exists():
+        text = env_path.read_text()
+        lines = text.splitlines()
+        if not text.endswith("\n"):
+            lines.append("")
+
+    existing_keys = {line.split("=", 1)[0].strip() for line in lines if "=" in line}
+    additions: list[str] = []
+    if "XMPP_USER_JID" not in existing_keys:
+        additions.append(f'XMPP_USER_JID="{jid}"')
+    if "XMPP_PASSWORD" not in existing_keys:
+        additions.append(f'XMPP_PASSWORD="{password}"')
+
+    if not additions:
+        return
+
+    if env_path.exists():
+        env_path.write_text("\n".join(lines + additions) + "\n")
+    else:
+        env_path.write_text("\n".join(additions) + "\n")
+    print(f"Appended XMPP credentials to {env_path}")
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
@@ -164,9 +229,29 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Do not add a default platforms.xmpp block to config.yaml",
     )
     parser.add_argument(
+        "--jid",
+        metavar="JID",
+        help="XMPP JID (e.g. hermes@example.com). If omitted, you will be prompted unless --no-defaults is set.",
+    )
+    parser.add_argument(
+        "--password",
+        metavar="PASSWORD",
+        help="XMPP password. If omitted, you will be prompted securely unless --no-defaults is set.",
+    )
+    parser.add_argument(
+        "--avatar-path",
+        metavar="PATH",
+        help="Path to an avatar image. If omitted, you will be prompted.",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Overwrite an existing plugin installation",
+    )
+    parser.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="Skip interactive prompts; requires --jid and --password if not using --no-defaults",
     )
     return parser.parse_args(argv)
 
@@ -208,7 +293,30 @@ def main(argv: Optional[list[str]] = None) -> int:
         backup_path = backup_file(config_path, ".install-backup")
         print(f"Backed up config to {backup_path}")
 
-    enable_plugin_in_config(config_path, add_defaults=not args.no_defaults)
+    jid = ""
+    password = ""
+    avatar_path = ""
+    if not args.no_defaults:
+        if args.non_interactive:
+            if not args.jid or not args.password:
+                fail("--non-interactive requires --jid and --password")
+            jid = args.jid
+            password = args.password
+            avatar_path = args.avatar_path or ""
+        else:
+            jid, password, avatar_path = prompt_xmpp_credentials(args)
+
+    enable_plugin_in_config(
+        config_path,
+        add_defaults=not args.no_defaults,
+        jid=jid,
+        password=password,
+        avatar_path=avatar_path,
+    )
+
+    if not args.no_defaults and jid and password:
+        env_path = profile_dir / ".env"
+        append_env_credentials(env_path, jid, password)
 
     print("\nInstallation complete.")
     print("Restart the Hermes gateway to load the plugin:")
