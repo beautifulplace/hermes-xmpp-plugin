@@ -1,17 +1,22 @@
 # Hermes XMPP Platform Plugin
 
-XMPP gateway adapter for [Hermes Agent](https://github.com/NousResearch/hermes-agent). Connects the agent to an XMPP server, routes messages, supports inbound/outbound media, OMEMO end-to-end encryption by default, and voice/audio messages via the Hermes core TTS/STT configuration.
+A polished, production-ready XMPP gateway adapter for [Hermes Agent](https://github.com/NousResearch/hermes-agent). It connects the agent to an XMPP server, routes plain-text or OMEMO-encrypted messages, handles inbound/outbound media, and integrates with Hermes core STT and TTS for voice messages.
 
 ## Features
 
-- OMEMO-encrypted messaging (default; plain-text fallback)
-- XEP-0085 typing indicators
-- XEP-0333 read receipts / chat markers
-- XEP-0066 / XEP-0363 inbound images, files, and voice messages
-- `aesgcm://` OMEMO media sharing decryption
-- XEP-0084 avatar publishing
-- Outgoing voice/audio messages via Hermes core TTS
-- Inbound voice-message transcription via Hermes core STT
+- **Messaging**: OMEMO end-to-end encryption by default (plain-text fallback)
+- **Typing indicators**: XEP-0085 Chat State Notifications
+- **Read receipts**: XEP-0333 Chat Markers
+- **Media**: XEP-0066 / XEP-0363 inbound images, files, and voice messages
+- **OMEMO media sharing**: decrypts `aesgcm://` URLs used by clients such as Conversations
+- **Avatars**: publishes XEP-0084 user avatars
+- **Voice/audio**: delegates STT and TTS to Hermes core; the adapter uploads and delivers the resulting audio
+
+## Requirements
+
+- Python 3.10+
+- A running [Hermes Agent](https://github.com/NousResearch/hermes-agent) gateway
+- An XMPP account for the bot
 
 ## Installation
 
@@ -30,20 +35,31 @@ python3 install_xmpp_plugin.py
 
 You will be prompted for your XMPP JID, password, and an optional avatar path. The installer will:
 
-- Copy the plugin to `~/.hermes/plugins/platforms/xmpp/`
-- Enable it in `config.yaml`
-- Install required Python dependencies into the plugin's own `deps/` directory
-- Back up your existing config before editing
+1. Copy the plugin to `~/.hermes/plugins/platforms/xmpp/`
+2. Enable it in `config.yaml`
+3. Install required Python dependencies into the plugin's own `deps/` directory
+4. Back up your existing config before editing
 
-Then restart the Hermes gateway:
+Restart the Hermes gateway to load the plugin:
 
 ```bash
 hermes gateway restart
 ```
 
-### Optional: disable OMEMO encryption
+### Non-interactive installation
 
-OMEMO is enabled by default. To install the plugin without the OMEMO dependency, pass `--only-required-deps`:
+For CI or headless setups, pass `--non-interactive` with `--jid` and `--password`:
+
+```bash
+python3 install_xmpp_plugin.py \
+  --non-interactive \
+  --jid "hermes@example.com" \
+  --password "your-password"
+```
+
+### Disable OMEMO encryption
+
+OMEMO is enabled by default. To install without the OMEMO dependency, pass `--only-required-deps`:
 
 ```bash
 python3 install_xmpp_plugin.py --only-required-deps
@@ -83,6 +99,22 @@ XMPP_USER_JID="hermes@example.com"
 XMPP_PASSWORD="your-password"
 ```
 
+### Environment variables
+
+Every `platforms.xmpp` option can also be set via an environment variable:
+
+| Variable | Purpose |
+|---|---|
+| `XMPP_USER_JID` | Bot XMPP address |
+| `XMPP_PASSWORD` | Bot account password |
+| `XMPP_SERVER` | Server hostname override (optional) |
+| `XMPP_PORT` | Server port (default: 5222) |
+| `XMPP_OMEMO_ENABLED` | Enable OMEMO (default: true) |
+| `XMPP_OMEMO_ALLOW_UNTRUSTED` | Auto-trust new OMEMO devices (default: true) |
+| `XMPP_AVATAR_PATH` | Path to an avatar image (optional) |
+| `XMPP_HOME_CHANNEL` | Default JID for cron / notifications |
+| `XMPP_ALLOW_ALL_USERS` | Allow any user to message the bot (default: false) |
+
 ## Voice and audio
 
 The XMPP plugin delegates speech-to-text and text-to-speech to the Hermes core. Configure them in `~/.hermes/config.yaml`:
@@ -108,7 +140,7 @@ tts:
   provider: edge
 ```
 
-Set `voice.auto_tts: true` to reply with voice to voice messages, or use the chat `/voice on` command. Available TTS providers are configured by Hermes (`edge`, `elevenlabs`, `openai`, `minimax`, `mistral`, `gemini`, `xai`, `neutts`, `kittentts`, or custom command providers). Run `hermes setup` or edit `config.yaml` to choose a provider.
+Set `voice.auto_tts: true` to reply with voice to voice messages, or use the chat `/voice on` command. TTS provider selection is handled by Hermes core.
 
 ## Uninstallation
 
@@ -120,7 +152,19 @@ This removes the plugin directory and disables it in `config.yaml`. A config bac
 
 ## Development
 
-Run the local tests:
+Install development dependencies:
+
+```bash
+python3 -m pip install ruff pytest
+```
+
+Run the linter:
+
+```bash
+ruff check .
+```
+
+Run the tests:
 
 ```bash
 python3 -m pytest
@@ -129,3 +173,5 @@ python3 -m pytest
 ## License
 
 MIT License — see [LICENSE](LICENSE).
+
+Copyright (c) 2026 beautifulplace and contributors.

@@ -5,8 +5,8 @@ version: 1.0.0
 description: >
   XMPP gateway adapter for Hermes Agent.
   Connects to an XMPP server and relays messages between XMPP users
-  and the Hermes agent. Optional OMEMO end-to-end encryption is
-  supported when slixmpp-omemo is installed.
+  and the Hermes agent. OMEMO end-to-end encryption is enabled by default
+  when slixmpp-omemo is installed.
 author: beautifulplace
 requires_env:
   - name: XMPP_USER_JID
@@ -39,7 +39,7 @@ optional_env:
     prompt: "XMPP home JID"
     password: false
   - name: XMPP_OMEMO_ENABLED
-    description: "Enable OMEMO end-to-end encryption (requires slixmpp-omemo)"
+    description: "Enable OMEMO end-to-end encryption (default: true; requires slixmpp-omemo)"
     prompt: "Enable OMEMO? (true/false)"
     password: false
   - name: XMPP_OMEMO_ALLOW_UNTRUSTED
@@ -48,19 +48,7 @@ optional_env:
     password: false
   - name: XMPP_AVATAR_PATH
     description: "Path to an image file to publish as the bot's XMPP avatar (optional)"
-  - name: XMPP_VOICE_REPLY
-    description: "Send an inline voice message for every text reply (requires edge-tts and ffmpeg)"
-    prompt: "Enable voice replies? (true/false)"
-    password: false
-  - name: XMPP_VOICE_MODEL
-    description: "edge-tts voice model (default: en-GB-SoniaNeural)"
-    prompt: "edge-tts voice model"
-    password: false
-  - name: XMPP_VOICE_FORMAT
-    description: "Voice container format: m4a (default), opus, ogg, oga"
-    prompt: "Voice format (m4a/opus/ogg/oga)"
-    password: false
     prompt: "Avatar image path (optional)"
     password: false
-install_hint: "pip install slixmpp"
+install_hint: "pip install slixmpp slixmpp-omemo httpx Pillow cryptography"
 omemo_install_hint: "pip install slixmpp-omemo"
