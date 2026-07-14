@@ -60,13 +60,7 @@ python3 install_xmpp_plugin.py \
 
 ### Disable OMEMO encryption
 
-OMEMO is enabled by default. To install without the OMEMO dependency, pass `--only-required-deps`:
-
-```bash
-python3 install_xmpp_plugin.py --only-required-deps
-```
-
-If the plugin is already installed, edit `~/.hermes/config.yaml` and set:
+If you need to disable OMEMO after installation, edit `~/.hermes/config.yaml` and set:
 
 ```yaml
 platforms:
