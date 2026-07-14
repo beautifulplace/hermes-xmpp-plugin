@@ -75,8 +75,41 @@ def _guess_audio_is_voice(url: str, body: str) -> bool:
     if "voice-message" in lowered:
         return True
     # Container formats commonly used for voice messages.
-    return any(lowered.endswith(ext) for ext in (".ogg", ".oga", ".opus", ".webm"))
+    if any(lowered.endswith(ext) for ext in (".ogg", ".oga", ".opus", ".webm")):
+        return True
+    # Voice messages are usually sent as standalone media with little or no
+    # accompanying text. If the body is empty or just the URL, assume voice.
+    stripped = body.strip()
+    if not stripped or stripped == url or len(stripped) <= len(url) + 10:
+        return True
+    return False
 
+
+def _guess_audio_extension(url: str, data: bytes) -> str:
+    """Return a sensible file extension for an audio file.
+
+    First inspects the file magic bytes, then falls back to the URL extension,
+    then defaults to .ogg.
+    """
+    if len(data) >= 12 and data[4:8] == b"ftyp":
+        return ".m4a"
+    if data.startswith(b"OggS"):
+        # Could be .ogg, .oga, or .opus; .ogg is the safe default.
+        return ".ogg"
+    if data.startswith(b"ID3"):
+        return ".mp3"
+    if len(data) >= 2 and data[:2] in (b"\xff\xfb", b"\xff\xf3"):
+        return ".mp3"
+    if data.startswith(b"RIFF") and len(data) >= 12 and data[8:12] == b"WAVE":
+        return ".wav"
+    if data.startswith(b"\x1a\x45\xdf\xa3"):
+        return ".webm"
+
+    lowered = url.lower()
+    for ext in (".m4a", ".mp4", ".ogg", ".oga", ".opus", ".mp3", ".webm", ".wav"):
+        if lowered.endswith(ext):
+            return ext
+    return ".ogg"
 
 class XMPPAdapter(BasePlatformAdapter):
     """
@@ -803,10 +836,12 @@ class XMPPAdapter(BasePlatformAdapter):
                 if data:
                     if _guess_audio_is_voice(url, body):
                         msg_type = MessageType.VOICE
-                        media_path = self._cache_media(data, "audio")
+                        ext = _guess_audio_extension(url, data)
+                        media_path = self._cache_media(data, "audio", ext=ext)
                     elif _is_audio_url(url):
                         msg_type = MessageType.AUDIO
-                        media_path = self._cache_media(data, "audio")
+                        ext = _guess_audio_extension(url, data)
+                        media_path = self._cache_media(data, "audio", ext=ext)
                     else:
                         msg_type = MessageType.PHOTO
                         media_path = self._cache_media(data, "image")
@@ -856,9 +891,10 @@ class XMPPAdapter(BasePlatformAdapter):
         except Exception as exc:
             logger.debug("XMPP: failed to send displayed marker: %s", exc)
 
-    def _cache_media(self, data: bytes, kind: str = "image") -> Optional[str]:
+    def _cache_media(self, data: bytes, kind: str = "image", ext: Optional[str] = None) -> Optional[str]:
         try:
-            ext = ".ogg" if kind == "audio" else ".png"
+            if ext is None:
+                ext = ".ogg" if kind == "audio" else ".png"
             mime = "audio/mpeg" if kind == "audio" else "image/png"
             validate_inbound_media_size(len(data), media_type=kind)
             # Use a unique filename to prevent cache collisions
