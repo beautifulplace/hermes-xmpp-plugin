@@ -1,10 +1,10 @@
 # Hermes XMPP Platform Plugin
 
-XMPP gateway adapter for [Hermes Agent](https://github.com/NousResearch/hermes-agent). Connects the agent to an XMPP server, routes messages, supports inbound/outbound media, optional OMEMO end-to-end encryption, and voice-message transcription.
+XMPP gateway adapter for [Hermes Agent](https://github.com/NousResearch/hermes-agent). Connects the agent to an XMPP server, routes messages, supports inbound/outbound media, OMEMO end-to-end encryption by default, and voice-message transcription.
 
 ## Features
 
-- Plain-text or OMEMO-encrypted messaging
+- OMEMO-encrypted messaging (default; plain-text fallback)
 - XEP-0085 typing indicators
 - XEP-0333 read receipts / chat markers
 - XEP-0066 / XEP-0363 inbound images, files, and voice messages
@@ -41,13 +41,23 @@ Then restart the Hermes gateway:
 hermes gateway restart
 ```
 
-### Optional: enable OMEMO encryption
+### Optional: disable OMEMO encryption
+
+OMEMO is enabled by default. To install the plugin without the OMEMO dependency, pass `--only-required-deps`:
 
 ```bash
 python3 install_xmpp_plugin.py --only-required-deps
 ```
 
-By default the installer installs `slixmpp-omemo` as an optional dependency. If you do not need OMEMO, pass `--only-required-deps`.
+If the plugin is already installed, edit `~/.hermes/config.yaml` and set:
+
+```yaml
+platforms:
+  xmpp:
+    omemo_enabled: false
+```
+
+Then restart the gateway.
 
 ### Optional: enable local voice-message transcription
 
