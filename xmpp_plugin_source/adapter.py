@@ -24,6 +24,7 @@ from PIL import Image
 from slixmpp import JID, ClientXMPP
 from slixmpp.plugins.base import register_plugin
 from slixmpp.stanza import Message
+from tools.transcription_tools import transcribe_audio
 
 logger = logging.getLogger(__name__)
 
@@ -869,23 +870,27 @@ class XMPPAdapter(BasePlatformAdapter):
             media_types: list[str] = []
             if media_path and url:
                 if msg_type == MessageType.VOICE:
-                    # Voice messages are auto-transcribed by Hermes core. Keep
-                    # the body text minimal (just the URL or empty) and pass the
-                    # cached file via media_urls so STT runs. The transcript
-                    # will replace the content instead of sitting next to a
-                    # local file path.
-                    media_urls = [media_path]
-                    media_types = ["audio/mpeg"]
+                    # Voice messages should reach the LLM as plain text, not as a
+                    # file attachment. Transcribe locally via Hermes core STT and
+                    # replace the message content with the transcript.
                     stripped = body.replace(url, "").strip()
-                    if stripped:
-                        display_text = stripped
-                    else:
-                        display_text = "(voice message)"
-                    logger.info(
-                        "XMPP: routing voice message via media_urls: path=%s text=%r",
-                        media_path,
-                        display_text,
-                    )
+                    try:
+                        result = transcribe_audio(media_path)
+                        if result.get("success"):
+                            display_text = result.get("transcript", "(voice message)").strip() or "(voice message)"
+                            logger.info(
+                                "XMPP: transcribed voice message: %r",
+                                display_text,
+                            )
+                            # Treat as a normal text message; no media_urls needed.
+                            msg_type = MessageType.TEXT
+                        else:
+                            error = result.get("error", "unknown error")
+                            logger.warning("XMPP: voice transcription failed: %s", error)
+                            display_text = stripped or "(voice message could not be transcribed)"
+                    except Exception as exc:
+                        logger.warning("XMPP: voice transcription error: %s", exc)
+                        display_text = stripped or "(voice message could not be transcribed)"
                 else:
                     display_text = body.replace(url, media_path)
                     if display_text == body:
