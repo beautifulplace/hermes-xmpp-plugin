@@ -4,5 +4,10 @@ include uninstall_xmpp_plugin.py
 include README.md
 include LICENSE
 include pyproject.toml
+include pytest.ini
 include requirements.txt
-recursive-include xmpp_plugin_source *.py *.yaml *.md
+include MANIFEST.in
+include .gitignore
+recursive-include .github *
+recursive-include tests *.py
+recursive-include xmpp_plugin_source *.py *.yaml *.md *.yml
