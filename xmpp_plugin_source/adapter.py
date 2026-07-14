@@ -3,7 +3,6 @@ import io
 import logging
 import os
 import re
-import tempfile
 import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -94,6 +93,19 @@ def _guess_extension_from_data(data: bytes) -> str:
     }.get(content_type, "")
 
 
+def _mime_from_extension(ext: str) -> str:
+    return {
+        ".m4a": "audio/mp4",
+        ".mp4": "audio/mp4",
+        ".opus": "audio/opus",
+        ".ogg": "audio/ogg",
+        ".oga": "audio/ogg",
+        ".mp3": "audio/mpeg",
+        ".wav": "audio/wav",
+        ".webm": "audio/webm",
+    }.get(ext.lower(), "audio/mp4")
+
+
 def _is_audio_url(url: str) -> bool:
     return any(url.lower().endswith(ext) for ext in (
         ".ogg", ".oga", ".mp3", ".m4a", ".webm", ".wav", ".opus"
@@ -168,7 +180,7 @@ class XMPPAdapter(BasePlatformAdapter):
       - XEP-0066 / XEP-0363 inbound images, files, and voice messages
       - aesgcm:// OMEMO media sharing decryption
       - XEP-0084 avatar publishing
-      - Outgoing voice messages via text-to-speech + HTTP File Upload
+      - Outgoing voice/audio messages via the Hermes core TTS tool
     """
 
     def __init__(self, config, **kwargs):
@@ -204,25 +216,7 @@ class XMPPAdapter(BasePlatformAdapter):
         self.typing_indicator = _parse_bool(
             os.getenv("XMPP_TYPING_INDICATOR") or extra.get("typing_indicator"), True
         )
-        self.voice_reply = _parse_bool(
-            os.getenv("XMPP_VOICE_REPLY") or extra.get("voice_reply"), False
-        )
-        self.voice_language = (
-            os.getenv("XMPP_VOICE_LANGUAGE") or extra.get("voice_language") or "en-US"
-        )
-        self.voice_tts = (
-            os.getenv("XMPP_VOICE_TTS") or extra.get("voice_tts") or "edge"
-        ).lower()
-        self.voice_model = (
-            os.getenv("XMPP_VOICE_MODEL") or extra.get("voice_model") or "en-US-AriaNeural"
-        )
         self.avatar_path = os.getenv("XMPP_AVATAR_PATH") or extra.get("avatar_path", "")
-        self.voice_format = (
-            os.getenv("XMPP_VOICE_FORMAT") or extra.get("voice_format") or "m4a"
-        ).lower().lstrip(".")
-        self.preload_whisper = _parse_bool(
-            os.getenv("XMPP_PRELOAD_WHISPER") or extra.get("preload_whisper"), False
-        )
         self.home_channel = os.getenv("XMPP_HOME_CHANNEL") or extra.get("home_channel", "")
 
         self._session_started_event = asyncio.Event()
@@ -379,70 +373,6 @@ class XMPPAdapter(BasePlatformAdapter):
             logger.info("XMPP: publishing avatar from %s", self.avatar_path)
             await self._publish_avatar()
             self._schedule_avatar_republish()
-        if self.preload_whisper:
-            asyncio.create_task(self._preload_whisper_model())
-
-    async def _preload_whisper_model(self):
-        """Warm the local faster-whisper model via the Hermes core STT path.
-
-        The core STT tool lazy-loads the model on first transcription, which can
-        make the first voice message time out with large models. We generate a
-        short silent audio file and run it through the core transcribe_audio tool
-        in a background thread so that subsequent voice messages hit a warm model.
-        """
-        try:
-            stt_config = self._load_hermes_stt_config()
-            if not stt_config or stt_config.get("provider") != "local":
-                logger.debug("XMPP: STT not configured for local provider; skipping whisper preload")
-                return
-            model_name = (stt_config.get("local") or {}).get("model") or "tiny"
-            logger.info("XMPP: preloading faster-whisper model '%s' via core STT path", model_name)
-
-            with tempfile.TemporaryDirectory() as tmpdir:
-                tmpdir = Path(tmpdir)
-                dummy_wav = tmpdir / "silent.wav"
-                proc = await asyncio.create_subprocess_exec(
-                    "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
-                    "-t", "1", "-acodec", "pcm_s16le", str(dummy_wav),
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout, stderr = await proc.communicate()
-                if proc.returncode != 0 or not dummy_wav.exists():
-                    logger.warning("XMPP: failed to create dummy audio for preload: %s", stderr.decode().strip()[-200:] if stderr else "unknown")
-                    return
-
-                loop = asyncio.get_running_loop()
-                result = await loop.run_in_executor(
-                    None,
-                    self._call_core_transcribe,
-                    str(dummy_wav),
-                )
-                if result and result.get("success"):
-                    logger.info("XMPP: faster-whisper model '%s' preloaded successfully", model_name)
-                else:
-                    logger.warning("XMPP: dummy transcription during preload returned: %s", result)
-        except Exception as exc:
-            logger.warning("XMPP: failed to preload faster-whisper model: %s", exc)
-
-    def _call_core_transcribe(self, file_path: str) -> dict[str, Any]:
-        """Call the Hermes core transcription tool to warm the model."""
-        try:
-            from tools.transcription_tools import transcribe_audio
-            return transcribe_audio(file_path)
-        except Exception as exc:
-            return {"success": False, "error": str(exc)}
-
-    def _load_hermes_stt_config(self) -> dict[str, Any]:
-        """Read stt config from the Hermes config.yaml."""
-        try:
-            config_path = Path.home() / ".hermes" / "config.yaml"
-            import yaml
-            with open(config_path) as f:
-                data = yaml.safe_load(f) or {}
-            return data.get("stt", {})
-        except Exception:
-            return {}
 
     def _schedule_avatar_republish(self) -> None:
         """Schedule a one-time avatar republish in case the first attempt did not propagate."""
@@ -522,16 +452,6 @@ class XMPPAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="invalid recipient jid")
 
         text = content
-        if self.voice_reply and text:
-            voice_result = await self._send_voice_reply(recipient, text)
-            if voice_result.success:
-                if not _parse_bool(
-                    os.getenv("XMPP_VOICE_ONLY") or (metadata or {}).get("voice_only"),
-                    False,
-                ):
-                    await self._send_text(recipient, text)
-                return voice_result
-
         return await self._send_text(recipient, text)
 
     async def _send_text(self, recipient: JID, text: str) -> SendResult:
@@ -573,166 +493,170 @@ class XMPPAdapter(BasePlatformAdapter):
             logger.exception("XMPP: failed to send message to %s: %s", recipient.bare, exc)
             return SendResult(success=False, error=str(exc))
 
-    async def _send_voice_reply(self, recipient: JID, text: str) -> SendResult:
+    async def send_voice(
+        self,
+        chat_id: str,
+        audio_path: str,
+        caption: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> SendResult:
+        """Send an audio file as a voice/audio message over XMPP.
+
+        Used by the Hermes core auto-TTS path. The file at ``audio_path`` is
+        uploaded and delivered with OMEMO/media-sharing metadata when possible.
+        """
         try:
-            audio_bytes = await self._synthesize_speech(text)
-            if not audio_bytes:
-                return SendResult(success=False, error="TTS produced no audio")
-
-            # edge-tts outputs MP3 regardless of filename suffix.
-            fmt = (self.voice_format or "m4a").lower().lstrip(".")
-            mime_map = {"m4a": "audio/mp4", "mp4": "audio/mp4", "opus": "audio/opus", "ogg": "audio/ogg", "oga": "audio/ogg"}
-            ext_map = {"m4a": ".m4a", "mp4": ".m4a", "opus": ".opus", "ogg": ".ogg", "oga": ".oga"}
-            content_type = mime_map.get(fmt, "audio/mp4")
-            ext = ext_map.get(fmt, ".m4a")
-            filename = f"voice_{uuid.uuid4().hex}{ext}"
-            # Prefer OMEMO media sharing (aesgcm://) for inline playback in Conversations.
-            url = await self._upload_encrypted_media(audio_bytes, filename, content_type)
-            logger.debug("XMPP: voice upload url=%s", url)
-            if not url:
-                # Fallback to plain HTTPS upload.
-                url = await self._upload_file(audio_bytes, filename, content_type)
-                logger.debug("XMPP: voice fallback url=%s mime=%s", url, content_type)
-            if not url:
-                return SendResult(success=False, error="HTTP file upload failed")
-
-            msg = self.client.make_message(mto=recipient, mtype="chat")
-            msg["body"] = url
-            msg["id"] = self.client.new_id()
-
-            # Attach XEP-0385 Stateless File Sharing metadata for inline media.
-            if url.startswith("aesgcm://"):
-                try:
-                    ns_sshare = "urn:xmpp:sfs:0"
-                    ns_share  = "urn:xmpp:share:1"
-                    ns_oob    = "jabber:x:oob"
-
-                    sfs = ET.Element("{" + ns_sshare + "}file-sharing")
-                    file_el = ET.SubElement(sfs, "{" + ns_share + "}file")
-                    ET.SubElement(file_el, "{" + ns_share + "}name").text = filename
-                    ET.SubElement(file_el, "{" + ns_share + "}media-type").text = content_type
-                    ET.SubElement(file_el, "{" + ns_share + "}size").text = str(len(audio_bytes))
-
-                    sources = ET.SubElement(sfs, "{" + ns_sshare + "}sources")
-                    ref = ET.SubElement(sources, "{" + ns_sshare + "}reference")
-                    ref.set("type", "http")
-                    ref.set("url", url)
-
-                    data_el = ET.SubElement(sfs, "{" + ns_oob + "}data")
-                    data_el.set("url", url)
-
-                    msg.xml.append(sfs)
-                except Exception as exc:
-                    logger.debug("XMPP: could not attach media-sharing metadata: %s", exc)
-
-
-            omemo = self._omemo_plugin()
-            if omemo is not None and self.omemo_enabled:
-                try:
-                    encrypted, _errors = await omemo.encrypt_message(
-                        msg,
-                        recipient_jids={recipient},
-                        identifier=str(recipient),
-                    )
-                    if encrypted:
-                        encrypted.send()
-                        logger.info("XMPP: OMEMO voice message sent to %s", recipient.bare)
-                        return SendResult(success=True)
-                except Exception as exc:
-                    logger.warning("XMPP: OMEMO voice send failed (%s); falling back", exc)
-
-            msg.send()
-            logger.info("XMPP: voice message sent to %s", recipient.bare)
-            return SendResult(success=True)
+            recipient = JID(chat_id)
         except Exception as exc:
-            logger.exception("XMPP: failed to send voice reply: %s", exc)
-            return SendResult(success=False, error=str(exc))
+            logger.error("XMPP: invalid recipient JID %s: %s", chat_id, exc)
+            return SendResult(success=False, error="invalid recipient jid")
 
-    async def _synthesize_speech(self, text: str) -> Optional[bytes]:
-        if self.voice_tts == "melo":
-            return await self._synthesize_speech_melo(text)
-        return await self._synthesize_speech_edge(text)
+        audio_path_obj = Path(audio_path)
+        if not audio_path_obj.exists():
+            return SendResult(success=False, error=f"audio file not found: {audio_path}")
 
+        audio_bytes = audio_path_obj.read_bytes()
+        ext = audio_path_obj.suffix.lower() or ".m4a"
+        content_type = _mime_from_extension(ext)
+        filename = f"voice_{uuid.uuid4().hex}{ext}"
 
-    async def _synthesize_speech_edge(self, text: str) -> Optional[bytes]:
-        try:
-            import edge_tts
-            communicate = edge_tts.Communicate(text, self.voice_model)
-            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-                mp3_path = Path(tmp.name)
-            await communicate.save(str(mp3_path))
-            return await self._transcode_to_voice_format(mp3_path)
-        except Exception as exc:
-            logger.warning("XMPP: TTS synthesis failed: %s", exc)
-            return None
+        url = await self._upload_encrypted_media(audio_bytes, filename, content_type)
+        if not url:
+            url = await self._upload_file(audio_bytes, filename, content_type)
+        if not url:
+            return SendResult(success=False, error="HTTP file upload failed")
 
+        msg = self.client.make_message(mto=recipient, mtype="chat")
+        msg["body"] = caption if caption else url
+        msg["id"] = self.client.new_id()
 
-    async def _synthesize_speech_melo(self, text: str) -> Optional[bytes]:
-        try:
-            from melo.api import TTS
+        if url.startswith("aesgcm://"):
+            try:
+                ns_sshare = "urn:xmpp:sfs:0"
+                ns_share = "urn:xmpp:share:1"
+                ns_oob = "jabber:x:oob"
 
-            loop = asyncio.get_running_loop()
-            # MeloTTS is CPU-bound; run it in a thread pool so we don't block the gateway loop.
-            with tempfile.TemporaryDirectory() as tmpdir:
-                tmpdir = Path(tmpdir)
-                wav_path = tmpdir / "melo.wav"
-                model = TTS(language="EN", use_hf=True)
-                speaker_ids = model.hps.data.spk2id
-                # Default to a neutral English speaker. Use XMPP_VOICE_MODEL env/config if provided.
-                speaker = self.voice_model if self.voice_model in speaker_ids else "EN-Default"
-                await loop.run_in_executor(
-                    None,
-                    model.tts_to_file,
-                    text,
-                    speaker_ids[speaker],
-                    str(wav_path),
-                    speed=1.0,
+                sfs = ET.Element("{" + ns_sshare + "}file-sharing")
+                file_el = ET.SubElement(sfs, "{" + ns_share + "}file")
+                ET.SubElement(file_el, "{" + ns_share + "}name").text = filename
+                ET.SubElement(file_el, "{" + ns_share + "}media-type").text = content_type
+                ET.SubElement(file_el, "{" + ns_share + "}size").text = str(len(audio_bytes))
+
+                sources = ET.SubElement(sfs, "{" + ns_sshare + "}sources")
+                ref = ET.SubElement(sources, "{" + ns_sshare + "}reference")
+                ref.set("type", "http")
+                ref.set("url", url)
+
+                data_el = ET.SubElement(sfs, "{" + ns_oob + "}data")
+                data_el.set("url", url)
+
+                msg.xml.append(sfs)
+            except Exception as exc:
+                logger.debug("XMPP: could not attach media-sharing metadata: %s", exc)
+
+        omemo = self._omemo_plugin()
+        if omemo is not None and self.omemo_enabled:
+            try:
+                encrypted, _errors = await omemo.encrypt_message(
+                    msg,
+                    recipient_jids={recipient},
+                    identifier=str(recipient),
                 )
-                if not wav_path.exists() or wav_path.stat().st_size == 0:
-                    logger.warning("XMPP: MeloTTS produced no audio")
-                    return None
-                return await self._transcode_to_voice_format(wav_path)
-        except Exception as exc:
-            logger.warning("XMPP: MeloTTS synthesis failed: %s", exc)
-            return None
+                if encrypted:
+                    encrypted.send()
+                    logger.info("XMPP: OMEMO voice message sent to %s", recipient.bare)
+                    return SendResult(success=True)
+            except Exception as exc:
+                logger.warning("XMPP: OMEMO voice send failed (%s); falling back", exc)
+
+        msg.send()
+        logger.info("XMPP: voice message sent to %s", recipient.bare)
+        return SendResult(success=True)
 
 
-    async def _transcode_to_voice_format(self, source_path: Path) -> Optional[bytes]:
+    async def send_voice(
+        self,
+        chat_id: str,
+        audio_path: str,
+        caption: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> SendResult:
+        """Send an audio file as a voice/audio message over XMPP.
+
+        Used by the Hermes core auto-TTS path. The file at ``audio_path`` is
+        uploaded and delivered with OMEMO/media-sharing metadata when possible.
+        """
         try:
-            fmt = self.voice_format
-            if fmt not in ("m4a", "mp4", "opus", "ogg", "oga"):
-                fmt = "m4a"
-
-            ext_map = {"m4a": ".m4a", "mp4": ".m4a", "opus": ".opus", "ogg": ".ogg", "oga": ".oga"}
-            codec_map = {"m4a": "aac", "mp4": "aac", "opus": "libopus", "ogg": "libopus", "oga": "libopus"}
-
-            ext = ext_map[fmt]
-            codec = codec_map[fmt]
-            out_path = source_path.with_suffix(ext)
-
-            args = ["ffmpeg", "-y", "-i", str(source_path), "-c:a", codec, "-b:a", "24k"]
-            if codec == "libopus":
-                args.extend(["-vbr", "on", "-application", "voip"])
-            args.append(str(out_path))
-
-            proc = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await proc.communicate()
-            source_path.unlink(missing_ok=True)
-
-            if proc.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0:
-                data = out_path.read_bytes()
-                out_path.unlink(missing_ok=True)
-                return data
-
-            logger.warning("XMPP: ffmpeg %s transcode failed: %s", fmt, stderr.decode().strip()[-200:] if stderr else "unknown")
-            return None
+            recipient = JID(chat_id)
         except Exception as exc:
-            logger.warning("XMPP: audio transcode failed: %s", exc)
-            return None
+            logger.error("XMPP: invalid recipient JID %s: %s", chat_id, exc)
+            return SendResult(success=False, error="invalid recipient jid")
+
+        audio_path_obj = Path(audio_path)
+        if not audio_path_obj.exists():
+            return SendResult(success=False, error=f"audio file not found: {audio_path}")
+
+        audio_bytes = audio_path_obj.read_bytes()
+        ext = audio_path_obj.suffix.lower() or ".m4a"
+        content_type = _mime_from_extension(ext)
+        filename = f"voice_{uuid.uuid4().hex}{ext}"
+
+        url = await self._upload_encrypted_media(audio_bytes, filename, content_type)
+        if not url:
+            url = await self._upload_file(audio_bytes, filename, content_type)
+        if not url:
+            return SendResult(success=False, error="HTTP file upload failed")
+
+        msg = self.client.make_message(mto=recipient, mtype="chat")
+        msg["body"] = caption if caption else url
+        msg["id"] = self.client.new_id()
+
+        if url.startswith("aesgcm://"):
+            try:
+                ns_sshare = "urn:xmpp:sfs:0"
+                ns_share = "urn:xmpp:share:1"
+                ns_oob = "jabber:x:oob"
+
+                sfs = ET.Element("{" + ns_sshare + "}file-sharing")
+                file_el = ET.SubElement(sfs, "{" + ns_share + "}file")
+                ET.SubElement(file_el, "{" + ns_share + "}name").text = filename
+                ET.SubElement(file_el, "{" + ns_share + "}media-type").text = content_type
+                ET.SubElement(file_el, "{" + ns_share + "}size").text = str(len(audio_bytes))
+
+                sources = ET.SubElement(sfs, "{" + ns_sshare + "}sources")
+                ref = ET.SubElement(sources, "{" + ns_sshare + "}reference")
+                ref.set("type", "http")
+                ref.set("url", url)
+
+                data_el = ET.SubElement(sfs, "{" + ns_oob + "}data")
+                data_el.set("url", url)
+
+                msg.xml.append(sfs)
+            except Exception as exc:
+                logger.debug("XMPP: could not attach media-sharing metadata: %s", exc)
+
+        omemo = self._omemo_plugin()
+        if omemo is not None and self.omemo_enabled:
+            try:
+                encrypted, _errors = await omemo.encrypt_message(
+                    msg,
+                    recipient_jids={recipient},
+                    identifier=str(recipient),
+                )
+                if encrypted:
+                    encrypted.send()
+                    logger.info("XMPP: OMEMO voice message sent to %s", recipient.bare)
+                    return SendResult(success=True)
+            except Exception as exc:
+                logger.warning("XMPP: OMEMO voice send failed (%s); falling back", exc)
+
+        msg.send()
+        logger.info("XMPP: voice message sent to %s", recipient.bare)
+        return SendResult(success=True)
 
 
     async def _upload_encrypted_media(self, plaintext: bytes, filename: str, content_type: str) -> Optional[str]:
@@ -1172,9 +1096,6 @@ _XMPP_YAML_KEYS = (
     "omemo_enabled",
     "omemo_allow_untrusted",
     "typing_indicator",
-    "voice_reply",
-    "voice_language",
-    "voice_model",
     "avatar_path",
     "home_channel",
     "allowed_users",
@@ -1196,7 +1117,7 @@ def register(ctx):
         validate_config=validate_config,
         is_connected=is_connected,
         required_env=["XMPP_USER_JID", "XMPP_PASSWORD"],
-        install_hint="pip install slixmpp slixmpp-omemo httpx Pillow cryptography edge-tts melotts",
+        install_hint="pip install slixmpp slixmpp-omemo httpx Pillow cryptography",
         setup_fn=interactive_setup,
         env_enablement_fn=_env_enablement,
         apply_yaml_config_fn=_apply_yaml_config,
