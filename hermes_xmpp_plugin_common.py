@@ -242,8 +242,6 @@ def add_default_xmpp_config(config_text: str, avatar_path: str = "") -> str:
 
         default_xmpp = f"""\n  xmpp:
     enabled: true
-    user_jid: ""
-    password: ""
     omemo_enabled: true
     omemo_allow_untrusted: true
     typing_indicator: true
@@ -262,8 +260,6 @@ def add_default_xmpp_config(config_text: str, avatar_path: str = "") -> str:
     default_block = f"""platforms:
   xmpp:
     enabled: true
-    user_jid: ""
-    password: ""
     omemo_enabled: true
     omemo_allow_untrusted: true
     typing_indicator: true
