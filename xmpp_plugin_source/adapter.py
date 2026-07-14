@@ -496,9 +496,8 @@ class XMPPAdapter(BasePlatformAdapter):
             except OSError:
                 pass
             if voice_result.success:
-                # Optionally send remaining text chunks as text after the voice message.
-                if len(text) > 4000:
-                    return await self._send_text(recipient, text[4000:])
+                # Also send the full text response as a follow-up message.
+                await self._send_text(recipient, text)
                 return voice_result
 
         logger.warning("XMPP: TTS audio generation failed or empty; sending text only")
