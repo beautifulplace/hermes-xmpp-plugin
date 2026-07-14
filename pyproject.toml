@@ -9,10 +9,10 @@ description = "XMPP gateway adapter for Hermes Agent with optional OMEMO encrypt
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "Nous Research"},
+    {name = "beautifulplace"},
 ]
 maintainers = [
-    {name = "Nous Research"},
+    {name = "beautifulplace"},
 ]
 requires-python = ">=3.10"
 keywords = ["hermes", "xmpp", "omemo", "chatbot", "gateway", "messaging"]
