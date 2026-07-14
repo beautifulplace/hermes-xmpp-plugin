@@ -1,6 +1,6 @@
 # Hermes XMPP Platform Plugin
 
-XMPP gateway adapter for [Hermes Agent](https://github.com/NousResearch/hermes-agent). Connects the agent to an XMPP server, routes messages, supports inbound/outbound media, OMEMO end-to-end encryption by default, and voice-message transcription.
+XMPP gateway adapter for [Hermes Agent](https://github.com/NousResearch/hermes-agent). Connects the agent to an XMPP server, routes messages, supports inbound/outbound media, OMEMO end-to-end encryption by default, and voice/audio messages via the Hermes core TTS/STT configuration.
 
 ## Features
 
@@ -10,8 +10,8 @@ XMPP gateway adapter for [Hermes Agent](https://github.com/NousResearch/hermes-a
 - XEP-0066 / XEP-0363 inbound images, files, and voice messages
 - `aesgcm://` OMEMO media sharing decryption
 - XEP-0084 avatar publishing
-- Outgoing voice messages via text-to-speech (TTS)
-- Inbound voice-message transcription via local faster-whisper
+- Outgoing voice/audio messages via Hermes core TTS
+- Inbound voice-message transcription via Hermes core STT
 
 ## Installation
 
@@ -41,48 +41,6 @@ Then restart the Hermes gateway:
 hermes gateway restart
 ```
 
-### GPU acceleration (CUDA)
-
-If the host has an NVIDIA GPU and the CUDA runtime installed, faster-whisper will use the GPU automatically (`device='auto'`). To set this up on Debian/Ubuntu:
-
-```bash
-sudo apt update
-sudo apt install nvidia-driver-550 nvidia-cuda-toolkit libcudnn8
-```
-
-Then reinstall the plugin so faster-whisper can pick the CUDA-enabled `ctranslate2` wheel:
-
-```bash
-cd hermes-xmpp-plugin
-python3 install_xmpp_plugin.py --force --with-whisper large-v3
-```
-
-The installer detects `nvidia-smi` and `libcublas`/`libcudnn`; it prints a warning if the driver is present but the CUDA runtime is missing. Without a CUDA GPU, `large-v3` is not practical for real-time transcription; use `medium` or smaller.
-
-### Optional: enable high-quality local TTS for voice replies
-
-By default, outgoing voice replies use `edge-tts` (cloud voices from Microsoft Edge). For a local, higher-quality alternative, install [MeloTTS](https://github.com/myshell-ai/MeloTTS):
-
-```bash
-python3 install_xmpp_plugin.py --with-melotts
-```
-
-The installer will:
-
-- Install `MeloTTS` into the plugin `deps/` directory
-- Pre-download the English model
-- Set `voice_tts: melo` and `voice_model: EN-Default` in `config.yaml`
-
-You can also combine faster-whisper and MeloTTS:
-
-```bash
-python3 install_xmpp_plugin.py --with-whisper base --with-melotts
-```
-
-MeloTTS speaker choices include: `EN-Default`, `EN-US`, `EN-BR`, `EN-AU`, `EN-IN`. Change `voice_model` in `config.yaml` or pass `--voice-model` at install time.
-
-Note: the first model download is from Hugging Face. For faster downloads, provide an HF_TOKEN when prompted.
-
 ### Optional: disable OMEMO encryption
 
 OMEMO is enabled by default. To install the plugin without the OMEMO dependency, pass `--only-required-deps`:
@@ -101,60 +59,9 @@ platforms:
 
 Then restart the gateway.
 
-### Optional: enable local voice-message transcription
-
-To install [faster-whisper](https://github.com/SYSTRAN/faster-whisper) and configure Hermes to use it for inbound XMPP voice messages:
-
-```bash
-python3 install_xmpp_plugin.py --with-whisper
-```
-
-This defaults to the `tiny` model. You can choose a different model:
-
-```bash
-python3 install_xmpp_plugin.py --with-whisper base
-```
-
-Available models: `tiny`, `base`, `small`, `medium`, `large-v1`, `large-v2`, `large-v3`.
-
-The installer will:
-
-- Install `faster-whisper` into the plugin `deps/` directory
-- Pre-download the requested model so first-use transcription is fast
-- Set `stt.enabled: true`, `stt.provider: local`, and `stt.local.model: <model>` in `config.yaml`
-
-For a Raspberry Pi 4 with 8 GB RAM, `tiny` is recommended. Larger models are slower and use more RAM.
-
-### Model sizes and hardware requirements
-
-| Model | Params | Disk | RAM (int8) | Recommended hardware |
-|---|---|---|---|---|
-| tiny | 39M | ~75 MB | ~300 MB | Raspberry Pi 4, low-power devices |
-| base | 74M | ~150 MB | ~500 MB | Raspberry Pi 4, entry-level CPUs |
-| small | 244M | ~500 MB | ~1 GB | Modern ARM boards, desktops |
-| medium | 769M | ~1.5 GB | ~2.5 GB | Desktop/laptop CPU (practical CPU limit) |
-| large-v1 | 1.55B | ~3 GB | ~3–4 GB | Desktop CPU with 8 GB+ RAM, or 4 GB+ VRAM GPU. Very slow on CPU; use medium or smaller for CPU-only real-time. |
-| large-v2 | 1.55B | ~3 GB | ~3–4 GB | Desktop CPU with 8 GB+ RAM, or 4 GB+ VRAM GPU. Very slow on CPU; use medium or smaller for CPU-only real-time. |
-| large-v3 | 1.55B | ~3 GB | ~3–4 GB | Desktop CPU with 8 GB+ RAM, or 4 GB+ VRAM GPU. Very slow on CPU; use medium or smaller for CPU-only real-time. |
-
-The large models may load on an 8 GB Raspberry Pi with int8 quantization, but transcription will be very slow and may run out of memory if other services are active.
-
-### Non-interactive installation
-
-For CI or headless setups:
-
-```bash
-python3 install_xmpp_plugin.py \
-  --non-interactive \
-  --jid "hermes@example.com" \
-  --password "your-password" \
-  --with-whisper tiny \
-  --force
-```
-
 ## Configuration
 
-The installer writes a default `platforms.xmpp` block in `config.yaml`. Key settings:
+The installer writes a default `platforms.xmpp` block in `config.yaml`:
 
 ```yaml
 platforms:
@@ -165,10 +72,6 @@ platforms:
     omemo_enabled: true
     omemo_allow_untrusted: true
     typing_indicator: true
-    voice_reply: false
-    voice_tts: edge
-    voice_model: EN-Default
-    voice_format: m4a
     avatar_path: "/path/to/avatar.png"
     home_channel: ""
     allow_all_users: false
@@ -181,6 +84,39 @@ For security, store the JID and password in your Hermes `.env` file instead of `
 XMPP_USER_JID="hermes@example.com"
 XMPP_PASSWORD="your-password"
 ```
+
+## Voice and audio
+
+The XMPP plugin delegates speech-to-text and text-to-speech to the Hermes core. Configure them in `~/.hermes/config.yaml`:
+
+### Inbound voice-message transcription (STT)
+
+```yaml
+stt:
+  enabled: true
+  provider: local
+  local:
+    model: medium
+```
+
+Hermes uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper) for local STT. Install the model through the Hermes setup flow or by installing `faster-whisper` into the Hermes environment.
+
+For a Raspberry Pi 4 with 8 GB RAM, use `tiny` or `base`. On a desktop with a CUDA GPU (e.g. RTX 3050 Mobile), `medium` or `large-v3` work well after installing the NVIDIA driver and CUDA runtime:
+
+```bash
+sudo apt install nvidia-driver-550 nvidia-cuda-toolkit libcudnn8
+```
+
+### Outgoing voice replies (TTS)
+
+```yaml
+voice:
+  auto_tts: true
+tts:
+  provider: edge
+```
+
+Set `voice.auto_tts: true` to reply with voice to voice messages, or use the chat `/voice on` command. Available TTS providers are configured by Hermes (`edge`, `elevenlabs`, `openai`, `minimax`, `mistral`, `gemini`, `xai`, `neutts`, `kittentts`, or custom command providers). Run `hermes setup` or edit `config.yaml` to choose a provider.
 
 ## Uninstallation
 
