@@ -125,28 +125,26 @@ The avatar is re-published each time the bot connects, so you can change the fil
 
 ## Voice and Audio
 
-This adapter delegates speech-to-text and text-to-speech to the Hermes core. Configure them in `~/.hermes/config.yaml`:
-
-### Inbound voice-message transcription (STT)
+The installer sets up the default voice and audio configuration automatically:
 
 ```yaml
 stt:
   enabled: true
   provider: local
   local:
-    model: medium
-```
+    model: tiny
 
-### Outgoing voice replies (TTS)
-
-```yaml
 voice:
   auto_tts: true
+
 tts:
   provider: edge
+  use_gateway: false
 ```
 
-Set `voice.auto_tts: true` to reply with voice to voice messages, or use the chat `/voice on` command. The adapter uploads the generated audio with `aesgcm://` OMEMO media-sharing metadata so it plays inline in supporting clients.
+With this default, the adapter transcribes inbound voice messages using Hermes core STT (`faster-whisper`) and replies with both a TTS voice message and the full text response. The adapter uploads generated audio with `aesgcm://` OMEMO media-sharing metadata so it plays inline in supporting clients.
+
+You can change the STT model or TTS provider by editing the corresponding blocks in `~/.hermes/config.yaml`.
 
 ## Read Receipts (Chat Markers)
 
