@@ -1,108 +1,136 @@
 # Hermes XMPP Platform Plugin
 
-XMPP gateway adapter for [Hermes Agent](https://github.com/NousResearch/hermes-agent). Connects the agent to an XMPP server, routes messages, supports inbound/outbound media, and optionally uses [OMEMO](https://xmpp.org/extensions/xep-0384.html) end-to-end encryption.
+XMPP gateway adapter for [Hermes Agent](https://github.com/NousResearch/hermes-agent). Connects the agent to an XMPP server, routes messages, supports inbound/outbound media, optional OMEMO end-to-end encryption, and voice-message transcription.
 
 ## Features
 
 - Plain-text or OMEMO-encrypted messaging
 - XEP-0085 typing indicators
-- XEP-0333 read receipts (chat markers)
-- Inbound image and file download, including `aesgcm://` OMEMO media sharing
-- Outbound voice messages via `edge-tts` + HTTP File Upload (optional)
-- XEP-0084 / XEP-0153 avatar publishing (optional)
+- XEP-0333 read receipts / chat markers
+- XEP-0066 / XEP-0363 inbound images, files, and voice messages
+- `aesgcm://` OMEMO media sharing decryption
+- XEP-0084 avatar publishing
+- Outgoing voice messages via text-to-speech (TTS)
+- Inbound voice-message transcription via local faster-whisper
 
-## Requirements
+## Installation
 
-- Python 3.10+
-- Hermes Agent installed
-- Core dependencies: `slixmpp`, `httpx`, `Pillow`, `cryptography`
-- Optional:
-  - `slixmpp-omemo` for OMEMO encryption
-  - `edge-tts` and `ffmpeg` for voice replies
-
-## Install
+Download the plugin tarball and extract it:
 
 ```bash
 tar -xzf hermes-xmpp-plugin.tar.gz
 cd hermes-xmpp-plugin
+```
+
+Run the installer:
+
+```bash
 python3 install_xmpp_plugin.py
 ```
 
-The installer will:
-1. Copy the plugin into `~/.hermes/plugins/platforms/xmpp`
-2. Install missing Python dependencies into a `deps` subdirectory under the plugin (no changes to your system or Hermes virtual environment)
-3. Back up your config before modifying it
-4. Prompt you for your XMPP JID, password, and optional avatar image path
-5. Enable `platforms/xmpp` in `~/.hermes/config.yaml`
-6. Add a default `platforms.xmpp` block populated with your credentials
-7. Append `XMPP_USER_JID` and `XMPP_PASSWORD` to your Hermes `.env` file
+You will be prompted for your XMPP JID, password, and an optional avatar path. The installer will:
 
-You can also pass credentials on the command line for non-interactive installs:
+- Copy the plugin to `~/.hermes/plugins/platforms/xmpp/`
+- Enable it in `config.yaml`
+- Install required Python dependencies into the plugin's own `deps/` directory
+- Back up your existing config before editing
 
-```bash
-python3 install_xmpp_plugin.py --non-interactive \
-                               --jid hermes@example.com \
-                               --password your-password \
-                               --avatar-path /path/to/avatar.png
-```
-
-### Install options
-
-```text
-python3 install_xmpp_plugin.py --hermes-home /path/to/hermes \
-                               --python /path/to/python \
-                               --force \
-                               --only-required-deps
-```
-
-- `--hermes-home`: target a non-default Hermes home (default: `$HERMES_HOME` or `~/.hermes`)
-- `--python`: Python interpreter to use for dependency detection/installs (default: Hermes venv python, then current interpreter)
-- `--force`: overwrite an existing plugin installation
-- `--only-required-deps`: skip optional dependencies (`slixmpp-omemo`, `edge-tts`)
-- `--no-defaults`: do not add a default `platforms.xmpp` block
-- `--non-interactive`: skip prompts; requires `--jid` and `--password` unless `--no-defaults` is used
-- `--jid`: XMPP JID
-- `--password`: XMPP password
-- `--avatar-path`: path to an avatar image (optional; at least 480x480 recommended)
-
-## Configure
-
-Edit `~/.hermes/config.yaml`:
-
-```yaml
-plugins:
-  enabled:
-    - platforms/xmpp
-
-platforms:
-  xmpp:
-    enabled: true
-    user_jid: "hermes@example.com"
-    password: "your-password"
-    omemo_enabled: true            # optional; requires slixmpp-omemo
-    omemo_allow_untrusted: true    # optional; auto-trust new OMEMO devices
-    avatar_path: "/path/to/avatar.png"  # optional
-```
-
-The JID domain is used automatically to determine the XMPP server, so `server` and `port` are normally not needed.
-
-Then restart the gateway:
+Then restart the Hermes gateway:
 
 ```bash
 hermes gateway restart
 ```
 
-## Uninstall
+### Optional: enable OMEMO encryption
+
+```bash
+python3 install_xmpp_plugin.py --only-required-deps
+```
+
+By default the installer installs `slixmpp-omemo` as an optional dependency. If you do not need OMEMO, pass `--only-required-deps`.
+
+### Optional: enable local voice-message transcription
+
+To install [faster-whisper](https://github.com/SYSTRAN/faster-whisper) and configure Hermes to use it for inbound XMPP voice messages:
+
+```bash
+python3 install_xmpp_plugin.py --with-whisper
+```
+
+This defaults to the `tiny` model. You can choose a different model:
+
+```bash
+python3 install_xmpp_plugin.py --with-whisper base
+```
+
+Available models: `tiny`, `base`, `small`, `medium`, `large-v1`, `large-v2`, `large-v3`.
+
+The installer will:
+
+- Install `faster-whisper` into the plugin `deps/` directory
+- Pre-download the requested model so first-use transcription is fast
+- Set `stt.enabled: true`, `stt.provider: local`, and `stt.local.model: <model>` in `config.yaml`
+
+For a Raspberry Pi 4 with 8 GB RAM, `tiny` is recommended. Larger models are slower and use more RAM.
+
+### Non-interactive installation
+
+For CI or headless setups:
+
+```bash
+python3 install_xmpp_plugin.py \
+  --non-interactive \
+  --jid "hermes@example.com" \
+  --password "your-password" \
+  --with-whisper tiny \
+  --force
+```
+
+## Configuration
+
+The installer writes a default `platforms.xmpp` block in `config.yaml`. Key settings:
+
+```yaml
+platforms:
+  xmpp:
+    enabled: true
+    user_jid: "hermes@example.com"
+    password: "your-password"
+    omemo_enabled: true
+    omemo_allow_untrusted: true
+    typing_indicator: true
+    voice_reply: false
+    voice_model: en-GB-SoniaNeural
+    voice_format: m4a
+    avatar_path: "/path/to/avatar.png"
+    home_channel: ""
+    allow_all_users: false
+```
+
+For security, store the password in your Hermes `.env` file instead:
+
+```bash
+# ~/.hermes/.env
+XMPP_USER_JID="hermes@example.com"
+XMPP_PASSWORD="your-password"
+```
+
+## Uninstallation
 
 ```bash
 python3 uninstall_xmpp_plugin.py
 ```
 
-This removes the plugin directory, disables `platforms/xmpp` in `config.yaml`, and creates a config backup. By default it interactively asks whether to remove the `platforms.xmpp` block as well.
+This removes the plugin directory and disables it in `config.yaml`. A config backup is created first.
 
-- `--keep-config`: keep the `platforms.xmpp` block without prompting
-- `--non-interactive`: skip the prompt and remove the `platforms.xmpp` block
+## Development
+
+Run the local tests:
+
+```bash
+python3 -m pytest
+```
 
 ## License
 
-MIT
+MIT License — see [LICENSE](LICENSE).

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import io
 import shutil
 import subprocess
 import sys
@@ -23,6 +24,7 @@ from hermes_xmpp_plugin_common import (
     get_hermes_home,
     get_hermes_python,
     get_profile_dir,
+    get_yaml_editor,
 )
 
 REQUIRED_PLUGIN_FILES = {
@@ -42,6 +44,9 @@ DEPENDENCIES: list[tuple[str, str, bool]] = [
     ("slixmpp-omemo", "slixmpp_omemo", False),
     ("edge-tts", "edge_tts", False),
 ]
+
+WHISPER_MODELS = ("tiny", "base", "small", "medium", "large-v1", "large-v2", "large-v3")
+DEFAULT_WHISPER_MODEL = "tiny"
 
 
 def fail(message: str) -> NoReturn:
@@ -70,13 +75,22 @@ def copy_plugin(plugin_src: Path, plugin_dest: Path, force: bool) -> None:
     shutil.copytree(plugin_src, plugin_dest)
 
 
-def install_dependencies(python: Path, plugin_dest: Path, only_required: bool) -> None:
+def install_dependencies(
+    python: Path,
+    plugin_dest: Path,
+    only_required: bool,
+    whisper_model: Optional[str] = None,
+) -> None:
     """Ensure plugin dependencies are importable by the gateway.
 
     First checks whether each dependency is already available in the gateway's
     Python environment. Any missing packages are installed into a ``deps``
     subdirectory under the plugin so we do not modify externally-managed Python
     installations (uv, system PEP-668, etc.).
+
+    If ``whisper_model`` is set, ``faster-whisper`` is installed and the model
+    is pre-downloaded so that first-use transcription does not block on a
+    network download.
     """
     deps_dir = plugin_dest / "deps"
     deps_dir.mkdir(parents=True, exist_ok=True)
@@ -96,6 +110,18 @@ def install_dependencies(python: Path, plugin_dest: Path, only_required: bool) -
         except subprocess.CalledProcessError:
             to_install.append(pip_name)
 
+    if whisper_model:
+        try:
+            subprocess.run(
+                [str(python), "-c", "import faster_whisper"],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            print("  faster-whisper: already installed")
+        except subprocess.CalledProcessError:
+            to_install.append("faster-whisper")
+
     if to_install:
         print(
             f"Installing missing dependencies into {deps_dir} with {python}: "
@@ -113,6 +139,24 @@ def install_dependencies(python: Path, plugin_dest: Path, only_required: bool) -
     else:
         print("All dependencies are satisfied.")
 
+    if whisper_model:
+        print(f"Pre-downloading faster-whisper model: {whisper_model}")
+        try:
+            subprocess.run(
+                [
+                    str(python), "-c",
+                    f"from faster_whisper import WhisperModel; "
+                    f"WhisperModel('{whisper_model}', device='cpu', compute_type='int8')",
+                ],
+                check=True,
+            )
+            print(f"  faster-whisper model '{whisper_model}' is ready.")
+        except subprocess.CalledProcessError as exc:
+            print(
+                f"  WARNING: failed to pre-download faster-whisper model: {exc}",
+                file=sys.stderr,
+            )
+
 
 def enable_plugin_in_config(
     config_path: Path,
@@ -120,6 +164,7 @@ def enable_plugin_in_config(
     jid: str = "",
     password: str = "",
     avatar_path: str = "",
+    whisper_model: str = "",
 ) -> None:
     if not config_path.exists():
         print(f"Config not found at {config_path}; creating minimal config")
@@ -134,7 +179,36 @@ def enable_plugin_in_config(
             config_text, jid=jid, password=password, avatar_path=avatar_path
         )
 
+    if whisper_model:
+        # Ensure STT is enabled with the chosen local model.
+        config_text = _ensure_stt_config(config_text, whisper_model)
+
     config_path.write_text(config_text)
+
+
+def _ensure_stt_config(config_text: str, model: str) -> str:
+    """Enable local STT in config.yaml and set the faster-whisper model."""
+    yaml, uses_ruamel = get_yaml_editor()
+    if uses_ruamel:
+        data = yaml.load(config_text)
+    else:
+        data = yaml.safe_load(config_text)
+
+    if data is None:
+        data = {}
+    if "stt" not in data or not isinstance(data["stt"], dict):
+        data["stt"] = {}
+    data["stt"]["enabled"] = True
+    data["stt"]["provider"] = "local"
+    if "local" not in data["stt"] or not isinstance(data["stt"]["local"], dict):
+        data["stt"]["local"] = {}
+    data["stt"]["local"]["model"] = model
+
+    if uses_ruamel:
+        stream = io.StringIO()
+        yaml.dump(data, stream)
+        return stream.getvalue()
+    return yaml.safe_dump(data, sort_keys=False, default_flow_style=False)
 
 
 def prompt_xmpp_credentials(
@@ -262,6 +336,19 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Install only required dependencies; skip optional ones (OMEMO, voice)",
     )
     parser.add_argument(
+        "--with-whisper",
+        metavar="MODEL",
+        nargs="?",
+        const=DEFAULT_WHISPER_MODEL,
+        default=None,
+        choices=WHISPER_MODELS,
+        help=(
+            "Install faster-whisper and enable local STT. "
+            "MODEL can be one of: tiny, base, small, medium, large-v1, large-v2, large-v3. "
+            "If no model is specified, defaults to tiny."
+        ),
+    )
+    parser.add_argument(
         "--no-defaults",
         action="store_true",
         help="Do not add a default platforms.xmpp block to config.yaml",
@@ -327,7 +414,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     env_path = profile_dir / ".env"
 
     copy_plugin(plugin_src, plugin_dest, force=args.force)
-    install_dependencies(python, plugin_dest, only_required=args.only_required_deps)
+    install_dependencies(
+        python,
+        plugin_dest,
+        only_required=args.only_required_deps,
+        whisper_model=args.with_whisper,
+    )
 
     if config_path.exists():
         backup_path = backup_file(config_path, ".install-backup")
@@ -352,12 +444,15 @@ def main(argv: Optional[list[str]] = None) -> int:
         jid=jid,
         password=password,
         avatar_path=avatar_path,
+        whisper_model=args.with_whisper,
     )
 
     if not args.no_defaults and jid and password:
         append_env_credentials(env_path, jid, password)
 
     print("\nInstallation complete.")
+    if args.with_whisper:
+        print(f"Local STT enabled with faster-whisper model: {args.with_whisper}")
     print("Restart the Hermes gateway to load the plugin:")
     print("  hermes gateway restart")
     return 0
