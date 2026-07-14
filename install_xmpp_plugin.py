@@ -183,6 +183,11 @@ def install_dependencies(
                     "Consider using 'tiny', 'base', or 'small' instead.",
                     file=sys.stderr,
                 )
+            print(
+                "  WARNING: large models are very slow on CPU and need a GPU for real-time. "
+                "Consider 'medium', 'small', or 'base' for CPU inference.",
+                file=sys.stderr,
+            )
         print(
             "  The model will be downloaded from Hugging Face. "
             "For large models an HF_TOKEN is recommended for faster downloads."
