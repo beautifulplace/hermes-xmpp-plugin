@@ -81,6 +81,7 @@ def install_dependencies(
     plugin_dest: Path,
     only_required: bool,
     whisper_model: Optional[str] = None,
+    hf_token: str = "",
 ) -> None:
     """Ensure plugin dependencies are importable by the gateway.
 
@@ -176,11 +177,11 @@ def install_dependencies(
         try:
             env = _python_env()
             # If an HF_TOKEN was collected/stored, use it for the download.
-            hf_token = env.get("HF_TOKEN", "")
-            if not hf_token:
-                hf_token = os.environ.get("HF_TOKEN", "")
             if hf_token:
                 env["HF_TOKEN"] = hf_token
+                print("  Using HF_TOKEN from installer prompt for model download.")
+            elif os.environ.get("HF_TOKEN"):
+                env["HF_TOKEN"] = os.environ.get("HF_TOKEN") or ""
                 print("  Using HF_TOKEN from environment for model download.")
             print("  Downloading model... (progress will appear below)")
             subprocess.run(
@@ -487,18 +488,8 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     env_path = profile_dir / ".env"
 
-    copy_plugin(plugin_src, plugin_dest, force=args.force)
-    install_dependencies(
-        python,
-        plugin_dest,
-        only_required=args.only_required_deps,
-        whisper_model=args.with_whisper,
-    )
-
-    if config_path.exists():
-        backup_path = backup_file(config_path, ".install-backup")
-        print(f"Backed up config to {backup_path}")
-
+    # Prompt for credentials before any download so that secrets (HF_TOKEN)
+    # are available when we pre-download the Whisper model.
     jid = ""
     password = ""
     avatar_path = ""
@@ -520,6 +511,24 @@ def main(argv: Optional[list[str]] = None) -> int:
             jid, password, avatar_path, hf_token = prompt_xmpp_credentials(
                 args, env_path, whisper_model=args.with_whisper
             )
+
+    # If we collected an HF_TOKEN during credential prompting, write it to
+    # .env immediately so the model pre-download can use it.
+    if hf_token and env_path.exists():
+        append_env_credentials(env_path, jid, password, hf_token=hf_token)
+
+    copy_plugin(plugin_src, plugin_dest, force=args.force)
+    install_dependencies(
+        python,
+        plugin_dest,
+        only_required=args.only_required_deps,
+        whisper_model=args.with_whisper,
+        hf_token=hf_token,
+    )
+
+    if config_path.exists():
+        backup_path = backup_file(config_path, ".install-backup")
+        print(f"Backed up config to {backup_path}")
 
     enable_plugin_in_config(
         config_path,
