@@ -865,11 +865,23 @@ class XMPPAdapter(BasePlatformAdapter):
             # If media was cached, replace the URL in the body with the local
             # path so downstream tools analyse the actual file, not the link.
             display_text = body
+            media_urls: list[str] = []
+            media_types: list[str] = []
             if media_path and url:
-                display_text = body.replace(url, media_path)
-                if display_text == body:
-                    # URL not in body (e.g. only in oob); use a direct note.
-                    display_text = f"{body}\n[Attached media: {media_path}]".strip()
+                if msg_type == MessageType.VOICE:
+                    # Voice messages are auto-transcribed by Hermes core. Keep
+                    # the body text minimal (just the URL or empty) and pass the
+                    # cached file via media_urls so STT runs. The transcript
+                    # will replace the content instead of sitting next to a
+                    # local file path.
+                    media_urls = [media_path]
+                    media_types = ["audio/mpeg"]
+                    display_text = body.replace(url, "").strip()
+                else:
+                    display_text = body.replace(url, media_path)
+                    if display_text == body:
+                        # URL not in body (e.g. only in oob); use a direct note.
+                        display_text = f"{body}\n[Attached media: {media_path}]".strip()
 
             source = self.build_source(
                 chat_id=sender_bare,
@@ -885,6 +897,8 @@ class XMPPAdapter(BasePlatformAdapter):
                 message_type=msg_type,
                 source=source,
                 raw_message=msg,
+                media_urls=media_urls,
+                media_types=media_types,
                 metadata={"encrypted": encrypted, "media_url": url, "media_path": media_path},
             )
             await self.handle_message(event)
