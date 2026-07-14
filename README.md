@@ -15,10 +15,10 @@ XMPP gateway adapter for [Hermes Agent](https://github.com/NousResearch/hermes-a
 
 ## Installation
 
-Download the plugin tarball and extract it:
+Clone the repository:
 
 ```bash
-tar -xzf hermes-xmpp-plugin.tar.gz
+git clone https://github.com/beautifulplace/hermes-xmpp-plugin.git
 cd hermes-xmpp-plugin
 ```
 
