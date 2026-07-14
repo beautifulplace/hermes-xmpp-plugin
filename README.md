@@ -102,8 +102,6 @@ Every `platforms.xmpp` option can also be set via an environment variable:
 |---|---|
 | `XMPP_USER_JID` | Bot XMPP address |
 | `XMPP_PASSWORD` | Bot account password |
-| `XMPP_SERVER` | Server hostname override (optional) |
-| `XMPP_PORT` | Server port (default: 5222) |
 | `XMPP_OMEMO_ENABLED` | Enable OMEMO (default: true) |
 | `XMPP_OMEMO_ALLOW_UNTRUSTED` | Auto-trust new OMEMO devices (default: true) |
 | `XMPP_AVATAR_PATH` | Path to an avatar image (optional) |
