@@ -67,8 +67,6 @@ The installer writes a default `platforms.xmpp` block in `config.yaml`:
 platforms:
   xmpp:
     enabled: true
-    user_jid: "hermes@example.com"
-    password: "your-password"
     omemo_enabled: true
     omemo_allow_untrusted: true
     typing_indicator: true
