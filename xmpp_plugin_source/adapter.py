@@ -875,6 +875,7 @@ class XMPPAdapter(BasePlatformAdapter):
 
             media_path: Optional[str] = None
             msg_type = MessageType.TEXT
+            original_msg_type = MessageType.TEXT
             if url:
                 logger.debug("XMPP: detected URL in message: %s", url)
                 if url.startswith("aesgcm://"):
@@ -910,6 +911,9 @@ class XMPPAdapter(BasePlatformAdapter):
                     logger.warning("XMPP: failed to download media from %s", url)
                     msg_type = MessageType.TEXT
 
+                # Remember that this was a voice message before we convert it to TEXT
+                # after transcription, so the adapter can still queue a TTS reply.
+                original_msg_type = msg_type
                 logger.debug("XMPP: cached media path=%s", media_path)
 
             # If media was cached, replace the URL in the body with the local
@@ -931,9 +935,11 @@ class XMPPAdapter(BasePlatformAdapter):
                                 "XMPP: transcribed voice message: %r",
                                 display_text,
                             )
-                            # Keep msg_type as VOICE so the gateway's auto-TTS reply
-                            # path fires. No media_urls means it won't be re-processed
-                            # as an audio attachment.
+                            # Convert to TEXT after successful transcription so the
+                            # gateway core doesn't also generate an auto-TTS reply.
+                            # The adapter-level _voice_reply_chats queue handles the
+                            # single outbound voice reply below.
+                            msg_type = MessageType.TEXT
                         else:
                             error = result.get("error", "unknown error")
                             logger.warning("XMPP: voice transcription failed: %s", error)
@@ -974,7 +980,7 @@ class XMPPAdapter(BasePlatformAdapter):
             # auto-TTS replies. Without this, _should_send_voice_reply stays off
             # because XMPP has no /voice command UI to set per-chat voice mode.
             auto_tts_default = getattr(self, "_auto_tts_default", False)
-            if auto_tts_default and msg_type == MessageType.VOICE:
+            if auto_tts_default and original_msg_type == MessageType.VOICE:
                 self._voice_reply_chats.add(sender_bare)
                 logger.info(
                     "XMPP: queued voice reply for chat %s (auto_tts_default=%s)",
