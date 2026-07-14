@@ -924,7 +924,14 @@ class XMPPAdapter(BasePlatformAdapter):
             # If the global voice.auto_tts default is on, opt this DM chat into
             # auto-TTS replies. Without this, _should_send_voice_reply stays off
             # because XMPP has no /voice command UI to set per-chat voice mode.
-            if getattr(self, "_auto_tts_default", False):
+            auto_tts_default = getattr(self, "_auto_tts_default", False)
+            logger.info(
+                "XMPP: auto_tts_default=%s msg_type=%s for chat %s",
+                auto_tts_default,
+                msg_type.value if hasattr(msg_type, "value") else msg_type,
+                sender_bare,
+            )
+            if auto_tts_default:
                 getattr(self, "_auto_tts_enabled_chats", set()).add(sender_bare)
 
             await self.handle_message(event)
