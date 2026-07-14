@@ -229,6 +229,11 @@ class XMPPAdapter(BasePlatformAdapter):
         self._ping_interval = 30.0
         self._ping_timeout = 10.0
 
+        # Track chats where the last inbound message was a voice message so we
+        # can reply with TTS audio when voice.auto_tts is enabled and the gateway
+        # uses the streaming response path (which skips base-adapter auto-TTS).
+        self._voice_reply_chats: set[str] = set()
+
     @property
     def name(self) -> str:
         return "XMPP"
@@ -453,6 +458,50 @@ class XMPPAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="invalid recipient jid")
 
         text = content
+        chat_id_str = str(recipient)
+        if chat_id_str in self._voice_reply_chats:
+            self._voice_reply_chats.discard(chat_id_str)
+            try:
+                return await self._send_voice_reply_text(recipient, text)
+            except Exception as exc:
+                logger.warning("XMPP: TTS voice reply failed (%s); sending text only", exc)
+        return await self._send_text(recipient, text)
+
+    async def _send_voice_reply_text(self, recipient: JID, text: str) -> SendResult:
+        """Generate TTS audio for the first chunk of text and send as a voice message.
+
+        Falls back to plain text if TTS generation fails.
+        """
+        from tools.tts_tool import check_tts_requirements, text_to_speech_tool
+
+        if not check_tts_requirements():
+            logger.warning("XMPP: TTS requirements not met; sending text only")
+            return await self._send_text(recipient, text)
+
+        # Only TTS the first chunk; XMPP voice messages are short.
+        tts_text = self.prepare_tts_text(text[:4000])
+        if not tts_text:
+            return await self._send_text(recipient, text)
+
+        import json as _json
+        tts_result_str = await asyncio.to_thread(text_to_speech_tool, text=tts_text)
+        tts_data = _json.loads(tts_result_str)
+        audio_path = tts_data.get("file_path")
+
+        if audio_path and Path(audio_path).exists():
+            logger.info("XMPP: sending TTS voice reply to %s", recipient.bare)
+            voice_result = await self.send_voice(str(recipient.bare), audio_path)
+            try:
+                os.remove(audio_path)
+            except OSError:
+                pass
+            if voice_result.success:
+                # Optionally send remaining text chunks as text after the voice message.
+                if len(text) > 4000:
+                    return await self._send_text(recipient, text[4000:])
+                return voice_result
+
+        logger.warning("XMPP: TTS audio generation failed or empty; sending text only")
         return await self._send_text(recipient, text)
 
     async def _send_text(self, recipient: JID, text: str) -> SendResult:
@@ -925,14 +974,13 @@ class XMPPAdapter(BasePlatformAdapter):
             # auto-TTS replies. Without this, _should_send_voice_reply stays off
             # because XMPP has no /voice command UI to set per-chat voice mode.
             auto_tts_default = getattr(self, "_auto_tts_default", False)
-            logger.info(
-                "XMPP: auto_tts_default=%s msg_type=%s for chat %s",
-                auto_tts_default,
-                msg_type.value if hasattr(msg_type, "value") else msg_type,
-                sender_bare,
-            )
-            if auto_tts_default:
-                getattr(self, "_auto_tts_enabled_chats", set()).add(sender_bare)
+            if auto_tts_default and msg_type == MessageType.VOICE:
+                self._voice_reply_chats.add(sender_bare)
+                logger.info(
+                    "XMPP: queued voice reply for chat %s (auto_tts_default=%s)",
+                    sender_bare,
+                    auto_tts_default,
+                )
 
             await self.handle_message(event)
         except Exception:
