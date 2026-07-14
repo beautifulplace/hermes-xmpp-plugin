@@ -12,6 +12,7 @@ import argparse
 import getpass
 import io
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -81,6 +82,7 @@ def install_dependencies(
     plugin_dest: Path,
     only_required: bool,
     whisper_model: Optional[str] = None,
+    melotts: bool = False,
     hf_token: str = "",
 ) -> None:
     """Ensure plugin dependencies are importable by the gateway.
@@ -132,6 +134,18 @@ def install_dependencies(
             print("  faster-whisper: already installed")
         except subprocess.CalledProcessError:
             to_install.append("faster-whisper")
+
+    if melotts:
+        try:
+            subprocess.run(
+                [str(python), "-c", "from melo.api import TTS"],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            print("  melotts: already installed")
+        except subprocess.CalledProcessError:
+            to_install.append("git+https://github.com/myshell-ai/MeloTTS.git")
 
     if to_install:
         print(
@@ -207,11 +221,43 @@ def install_dependencies(
                 file=sys.stderr,
             )
 
+    if melotts:
+        print("Pre-downloading MeloTTS English model")
+        try:
+            env = _python_env()
+            if hf_token:
+                env["HF_TOKEN"] = hf_token
+                print("  Using HF_TOKEN from installer prompt for MeloTTS download.")
+            elif os.environ.get("HF_TOKEN"):
+                env["HF_TOKEN"] = os.environ.get("HF_TOKEN") or ""
+                print("  Using HF_TOKEN from environment for MeloTTS download.")
+            print("  Downloading model... (progress will appear below)")
+            subprocess.run(
+                [
+                    str(python), "-c",
+                    "import os; "
+                    "import sys; "
+                    "from melo.api import TTS; "
+                    "model = TTS(language='EN', use_hf=True); "
+                    "print('MeloTTS EN model ready')",
+                ],
+                check=True,
+                env=env,
+            )
+            print("  MeloTTS English model is ready.")
+        except subprocess.CalledProcessError as exc:
+            print(
+                f"  WARNING: failed to pre-download MeloTTS model: {exc}",
+                file=sys.stderr,
+            )
+
 
 def enable_plugin_in_config(
     config_path: Path,
     add_defaults: bool,
     avatar_path: str = "",
+    voice_tts: str = "",
+    voice_model: str = "",
     whisper_model: str = "",
 ) -> None:
     if not config_path.exists():
@@ -226,6 +272,11 @@ def enable_plugin_in_config(
         config_text = add_default_xmpp_config(
             config_text, avatar_path=avatar_path
         )
+
+    if voice_tts:
+        config_text = _set_config_value(config_text, "platforms", "xmpp", "voice_tts", voice_tts)
+    if voice_model:
+        config_text = _set_config_value(config_text, "platforms", "xmpp", "voice_model", voice_model)
 
     if whisper_model:
         # Ensure STT is enabled with the chosen local model.
@@ -259,8 +310,49 @@ def _ensure_stt_config(config_text: str, model: str) -> str:
     return yaml.safe_dump(data, sort_keys=False, default_flow_style=False)
 
 
+def _set_config_value(
+    config_text: str,
+    top_key: str,
+    sub_key: str,
+    option: str,
+    value: str,
+) -> str:
+    """Set a scalar value inside a nested block using regex (no YAML lib required)."""
+    lines = config_text.splitlines()
+    in_top = False
+    in_sub = False
+    sub_indent = -1
+    for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        if not in_top:
+            if re.match(rf"^{top_key}:\s*$", stripped):
+                in_top = True
+            continue
+        # Inside top block; detect sub_key at top+2 indent.
+        if in_sub:
+            # End of sub-block if indent drops below sub_indent.
+            if stripped and line.startswith(" ") and len(line) - len(stripped) < sub_indent:
+                in_sub = False
+                continue
+            # Match option line at sub_indent + 2 spaces.
+            opt_match = re.match(rf"^ {{{sub_indent + 2}}}{option}:\s*(.*)$", line)
+            if opt_match:
+                lines[i] = f"{' ' * (sub_indent + 2)}{option}: {value}"
+                return "\n".join(lines) + "\n"
+        else:
+            match = re.match(rf"^  {sub_key}:\s*$", stripped)
+            if match:
+                in_sub = True
+                sub_indent = len(line) - len(stripped)
+    # Not found: append to sub_key block if it exists, else append whole block.
+    return config_text.rstrip() + "\n"
+
+
 def prompt_xmpp_credentials(
-    args: argparse.Namespace, env_path: Path, whisper_model: str = ""
+    args: argparse.Namespace,
+    env_path: Path,
+    whisper_model: str = "",
+    with_melotts: bool = False,
 ) -> tuple[str, str, str, str]:
     """Return (jid, password, avatar_path, hf_token), prompting for missing values.
 
@@ -310,9 +402,12 @@ def prompt_xmpp_credentials(
         avatar_path = input("Avatar file path (leave blank for none): ").strip()
 
     hf_token = ""
-    if whisper_model and whisper_model.startswith("large"):
+    needs_hf_token = (
+        (whisper_model and whisper_model.startswith("large")) or with_melotts
+    )
+    if needs_hf_token:
         print(
-            "\nHugging Face token (optional). Large model downloads are faster "
+            "\nHugging Face token (optional). Model downloads are faster "
             "and more reliable with an HF_TOKEN. Leave blank to skip."
         )
         default_hf_token = defaults.get("HF_TOKEN", "")
@@ -424,6 +519,26 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--with-melotts",
+        action="store_true",
+        help="Install MeloTTS for high-quality local text-to-speech voice replies",
+    )
+    parser.add_argument(
+        "--voice-tts",
+        choices=("edge", "melo"),
+        default=None,
+        help="Set platforms.xmpp.voice_tts in config.yaml (default: edge). Use 'melo' with --with-melotts.",
+    )
+    parser.add_argument(
+        "--voice-model",
+        metavar="MODEL",
+        default=None,
+        help=(
+            "Set platforms.xmpp.voice_model in config.yaml. For MeloTTS this can be "
+            "a speaker name such as EN-Default, EN-US, EN-BR, EN-AU, EN-IN."
+        ),
+    )
+    parser.add_argument(
         "--no-defaults",
         action="store_true",
         help="Do not add a default platforms.xmpp block to config.yaml",
@@ -507,9 +622,17 @@ def main(argv: Optional[list[str]] = None) -> int:
                     "Set HF_TOKEN in the .env file manually, or run interactively.",
                     file=sys.stderr,
                 )
+            if args.with_melotts:
+                print(
+                    "WARNING: --with-melotts downloads models from Hugging Face. "
+                    "Set HF_TOKEN in the .env file manually for faster downloads, or run interactively.",
+                    file=sys.stderr,
+                )
         else:
             jid, password, avatar_path, hf_token = prompt_xmpp_credentials(
-                args, env_path, whisper_model=args.with_whisper
+                args, env_path,
+                whisper_model=args.with_whisper,
+                with_melotts=args.with_melotts,
             )
 
     # If we collected an HF_TOKEN during credential prompting, write it to
@@ -523,6 +646,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         plugin_dest,
         only_required=args.only_required_deps,
         whisper_model=args.with_whisper,
+        melotts=args.with_melotts,
         hf_token=hf_token,
     )
 
@@ -534,6 +658,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         config_path,
         add_defaults=not args.no_defaults,
         avatar_path=avatar_path,
+        voice_tts=args.voice_tts or ("melo" if args.with_melotts else "edge"),
+        voice_model=args.voice_model or ("EN-Default" if args.with_melotts else "en-US-AriaNeural"),
         whisper_model=args.with_whisper,
     )
 
@@ -544,6 +670,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     print("\nInstallation complete.")
     if args.with_whisper:
         print(f"Local STT enabled with faster-whisper model: {args.with_whisper}")
+    if args.with_melotts:
+        print("Local TTS enabled with MeloTTS.")
     print("Restart the Hermes gateway to load the plugin:")
     print("  hermes gateway restart")
     return 0
