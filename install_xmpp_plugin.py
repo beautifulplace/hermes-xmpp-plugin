@@ -298,6 +298,7 @@ def enable_plugin_in_config(
     avatar_path: str = "",
     voice_tts: str = "",
     voice_model: str = "",
+    preload_whisper: bool = False,
     whisper_model: str = "",
 ) -> None:
     if not config_path.exists():
@@ -317,6 +318,8 @@ def enable_plugin_in_config(
         config_text = _set_config_value(config_text, "platforms", "xmpp", "voice_tts", voice_tts)
     if voice_model:
         config_text = _set_config_value(config_text, "platforms", "xmpp", "voice_model", voice_model)
+    if preload_whisper:
+        config_text = _set_config_value(config_text, "platforms", "xmpp", "preload_whisper", "true")
 
     if whisper_model:
         # Ensure STT is enabled with the chosen local model.
@@ -564,6 +567,11 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Install MeloTTS for high-quality local text-to-speech voice replies",
     )
     parser.add_argument(
+        "--preload-whisper",
+        action="store_true",
+        help="Preload the faster-whisper model in the background when the gateway connects",
+    )
+    parser.add_argument(
         "--voice-tts",
         choices=("edge", "melo"),
         default=None,
@@ -700,6 +708,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         avatar_path=avatar_path,
         voice_tts=args.voice_tts or ("melo" if args.with_melotts else "edge"),
         voice_model=args.voice_model or ("EN-Default" if args.with_melotts else "en-US-AriaNeural"),
+        preload_whisper=args.preload_whisper,
         whisper_model=args.with_whisper,
     )
 
@@ -710,6 +719,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     print("\nInstallation complete.")
     if args.with_whisper:
         print(f"Local STT enabled with faster-whisper model: {args.with_whisper}")
+    if args.preload_whisper:
+        print("faster-whisper will be preloaded in the background when the gateway connects.")
     if args.with_melotts:
         print("Local TTS enabled with MeloTTS.")
     print("Restart the Hermes gateway to load the plugin:")
