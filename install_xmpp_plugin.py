@@ -166,6 +166,18 @@ def install_dependencies(
 
     if whisper_model:
         print(f"Pre-downloading faster-whisper model: {whisper_model}")
+
+        nvidia_driver = shutil.which("nvidia-smi") is not None
+        cuda_runtime = False
+        try:
+            result = subprocess.run(
+                ["ldconfig", "-p"], capture_output=True, text=True, timeout=5
+            )
+            if "libcublas" in result.stdout or "libcudnn" in result.stdout:
+                cuda_runtime = True
+        except Exception:
+            pass
+
         if whisper_model.startswith("large"):
             total_ram_gb = 0
             try:
@@ -183,11 +195,28 @@ def install_dependencies(
                     "Consider using 'tiny', 'base', or 'small' instead.",
                     file=sys.stderr,
                 )
+            if not (nvidia_driver and cuda_runtime):
+                print(
+                    "  WARNING: large models are very slow on CPU and need a CUDA GPU for real-time. "
+                    "Consider 'medium', 'small', or 'base' for CPU inference, or install CUDA drivers.",
+                    file=sys.stderr,
+                )
+
+        if nvidia_driver and cuda_runtime:
+            print("  NVIDIA driver and CUDA runtime detected; pre-download will use GPU if faster-whisper supports it.")
+        elif nvidia_driver:
             print(
-                "  WARNING: large models are very slow on CPU and need a GPU for real-time. "
-                "Consider 'medium', 'small', or 'base' for CPU inference.",
+                "  WARNING: NVIDIA driver detected but CUDA runtime (libcublas/libcudnn) is missing. "
+                "faster-whisper will fall back to CPU.\n"
+                "  Install CUDA runtime with: sudo apt install nvidia-cuda-toolkit libcudnn8",
                 file=sys.stderr,
             )
+        else:
+            print(
+                "  No NVIDIA GPU detected; pre-download uses CPU. "
+                "Large models will be slow without a CUDA GPU.",
+            )
+
         print(
             "  The model will be downloaded from Hugging Face. "
             "For large models an HF_TOKEN is recommended for faster downloads."
@@ -213,7 +242,7 @@ def install_dependencies(
                     "model = sys.argv[1]; "
                     "repo = f'Systran/faster-whisper-{model}'; "
                     "snapshot_download(repo, local_files_only=False); "
-                    "WhisperModel(model, device='cpu', compute_type='int8')",
+                    "WhisperModel(model, device='auto', compute_type='auto')",
                     whisper_model,
                 ],
                 check=True,
