@@ -665,10 +665,9 @@ class XMPPAdapter(BasePlatformAdapter):
         try:
             if url.startswith("aesgcm://"):
                 return await self._download_aesgcm(url)
-            async with self._http as client:
-                resp = await client.get(url)
-                resp.raise_for_status()
-                return resp.content
+            resp = await self._http.get(url)
+            resp.raise_for_status()
+            return resp.content
         except Exception as exc:
             logger.warning("XMPP: failed to download %s: %s", url, exc)
             return None
@@ -683,10 +682,9 @@ class XMPPAdapter(BasePlatformAdapter):
             iv = bytes.fromhex(fragment[:24])
             key = bytes.fromhex(fragment[24:])
             https_url = f"https://{parsed.netloc}{parsed.path}"
-            async with self._http as client:
-                resp = await client.get(https_url)
-                resp.raise_for_status()
-                ciphertext = resp.content
+            resp = await self._http.get(https_url)
+            resp.raise_for_status()
+            ciphertext = resp.content
             aesgcm = AESGCM(key)
             plaintext = aesgcm.decrypt(iv, ciphertext, None)
             return plaintext
