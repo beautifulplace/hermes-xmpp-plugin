@@ -14,7 +14,6 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
-
 DEFAULT_HERMES_HOME = Path.home() / ".hermes"
 
 
@@ -33,8 +32,6 @@ def get_hermes_home(cli_value: Optional[str] = None) -> Path:
     else:
         path = DEFAULT_HERMES_HOME
 
-    if not path.exists():
-        raise FileNotFoundError(f"Hermes home not found: {path}")
     return path
 
 
@@ -139,9 +136,26 @@ def is_plugin_enabled(config_text: str) -> bool:
 
 
 def enable_plugin(config_text: str) -> str:
-    """Add platforms/xmpp to plugins.enabled, creating the block if needed."""
+    """Add platforms/xmpp to plugins.enabled, creating the block if needed.
+
+    If a platforms block exists, the plugins block is inserted immediately
+    before it so the enabled-platforms section sits near the platform
+    definitions. Otherwise it is appended to the end of the file.
+    """
     if is_plugin_enabled(config_text):
         return config_text
+
+    new_plugins_block = "plugins:\n  enabled:\n    - platforms/xmpp\n"
+
+    if re.search(r"^platforms:\s*$", config_text, re.MULTILINE):
+        # Insert plugins block right before platforms block.
+        return re.sub(
+            r"^(platforms:\s*)$",
+            lambda m: new_plugins_block.rstrip() + "\n\n" + m.group(1),
+            config_text,
+            count=1,
+            flags=re.MULTILINE,
+        )
 
     if re.search(r"^plugins:\s*$", config_text, re.MULTILINE):
         # plugins block exists, ensure enabled list exists and append.
@@ -167,8 +181,8 @@ def enable_plugin(config_text: str) -> str:
             flags=re.MULTILINE,
         )
 
-    # Create plugins block at top of file.
-    return "plugins:\n  enabled:\n    - platforms/xmpp\n\n" + config_text
+    # Create plugins block at the end of file.
+    return config_text.rstrip() + "\n\n" + new_plugins_block + "\n"
 
 
 def disable_plugin(config_text: str) -> str:
@@ -196,7 +210,7 @@ def disable_plugin(config_text: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def add_default_xmpp_config(config_text: str) -> str:
+def add_default_xmpp_config(config_text: str, jid: str = "", password: str = "", avatar_path: str = "") -> str:
     """Add a default platforms.xmpp block if one does not exist."""
     if re.search(r"^platforms:\s*$", config_text, re.MULTILINE):
         # platforms block exists.
@@ -205,19 +219,17 @@ def add_default_xmpp_config(config_text: str) -> str:
         if re.search(r"^\s+xmpp:\s*$", block, re.MULTILINE):
             return config_text
 
-        default_xmpp = """\n  xmpp:
+        default_xmpp = f"""\n  xmpp:
     enabled: true
-    user_jid: ""
-    password: ""
-    server: ""
-    port: 5222
+    user_jid: "{jid}"
+    password: "{password}"
     omemo_enabled: true
     omemo_allow_untrusted: true
     typing_indicator: true
     voice_reply: false
     voice_model: en-GB-SoniaNeural
     voice_format: m4a
-    avatar_path: ""
+    avatar_path: "{avatar_path}"
     home_channel: ""
     allow_all_users: false
 """
@@ -229,20 +241,18 @@ def add_default_xmpp_config(config_text: str) -> str:
             flags=re.MULTILINE,
         )
 
-    default_block = """platforms:
+    default_block = f"""platforms:
   xmpp:
     enabled: true
-    user_jid: ""
-    password: ""
-    server: ""
-    port: 5222
+    user_jid: "{jid}"
+    password: "{password}"
     omemo_enabled: true
     omemo_allow_untrusted: true
     typing_indicator: true
     voice_reply: false
     voice_model: en-GB-SoniaNeural
     voice_format: m4a
-    avatar_path: ""
+    avatar_path: "{avatar_path}"
     home_channel: ""
     allow_all_users: false
 """
@@ -266,7 +276,6 @@ def remove_xmpp_config(config_text: str) -> str:
             continue
         if skip:
             indent = len(line) - len(line.lstrip())
-            xmpp_indent = len(lines[start + block.index(line)]) - len(stripped) if False else 2
             if stripped and indent <= 2:
                 skip = False
             else:
