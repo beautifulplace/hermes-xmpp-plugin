@@ -247,14 +247,9 @@ def add_default_xmpp_config(config_text: str, avatar_path: str = "") -> str:
     omemo_enabled: true
     omemo_allow_untrusted: true
     typing_indicator: true
-    voice_reply: false
-    voice_tts: edge
-    voice_model: EN-Default
-    voice_format: m4a
     avatar_path: "{avatar_path}"
     home_channel: ""
     allow_all_users: false
-    preload_whisper: false
 """
         return re.sub(
             r"^(platforms:\s*\n(?:  .+\n?)*)",
@@ -272,14 +267,9 @@ def add_default_xmpp_config(config_text: str, avatar_path: str = "") -> str:
     omemo_enabled: true
     omemo_allow_untrusted: true
     typing_indicator: true
-    voice_reply: false
-    voice_tts: edge
-    voice_model: EN-Default
-    voice_format: m4a
     avatar_path: "{avatar_path}"
     home_channel: ""
     allow_all_users: false
-    preload_whisper: false
 """
     return config_text.rstrip() + "\n\n" + default_block + "\n"
 

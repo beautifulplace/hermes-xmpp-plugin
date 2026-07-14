@@ -44,11 +44,10 @@ DEPENDENCIES: list[tuple[str, str, bool]] = [
     ("Pillow", "PIL", True),
     ("cryptography", "cryptography", True),
     ("slixmpp-omemo", "slixmpp_omemo", False),
-    ("edge-tts", "edge_tts", False),
 ]
 
-WHISPER_MODELS = ("tiny", "base", "small", "medium", "large-v1", "large-v2", "large-v3")
-DEFAULT_WHISPER_MODEL = "tiny"
+# NOTE: STT/TTS are handled by Hermes core. Do not add faster-whisper, edge-tts,
+# or MeloTTS here. Configure them in config.yaml under stt: and tts:.
 
 
 def fail(message: str) -> NoReturn:
@@ -81,9 +80,6 @@ def install_dependencies(
     python: Path,
     plugin_dest: Path,
     only_required: bool,
-    whisper_model: Optional[str] = None,
-    melotts: bool = False,
-    hf_token: str = "",
 ) -> None:
     """Ensure plugin dependencies are importable by the gateway.
 
@@ -91,10 +87,6 @@ def install_dependencies(
     Python environment. Any missing packages are installed into a ``deps``
     subdirectory under the plugin so we do not modify externally-managed Python
     installations (uv, system PEP-668, etc.).
-
-    If ``whisper_model`` is set, ``faster-whisper`` is installed and the model
-    is pre-downloaded so that first-use transcription does not block on a
-    network download.
     """
     deps_dir = plugin_dest / "deps"
     deps_dir.mkdir(parents=True, exist_ok=True)
@@ -123,31 +115,6 @@ def install_dependencies(
         except subprocess.CalledProcessError:
             to_install.append(pip_name)
 
-    if whisper_model:
-        try:
-            subprocess.run(
-                [str(python), "-c", "import faster_whisper"],
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            print("  faster-whisper: already installed")
-        except subprocess.CalledProcessError:
-            to_install.append("faster-whisper")
-
-    if melotts:
-        try:
-            subprocess.run(
-                [str(python), "-c", "from melo.api import TTS"],
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            print("  melotts: already installed")
-        except subprocess.CalledProcessError:
-            # setuptools/pkg_resources is required by librosa inside MeloTTS.
-            to_install.extend(["setuptools", "git+https://github.com/myshell-ai/MeloTTS.git"])
-
     if to_install:
         print(
             f"Installing missing dependencies into {deps_dir} with {python}: "
@@ -165,141 +132,11 @@ def install_dependencies(
     else:
         print("All dependencies are satisfied.")
 
-    if whisper_model:
-        print(f"Pre-downloading faster-whisper model: {whisper_model}")
-
-        nvidia_driver = shutil.which("nvidia-smi") is not None
-        cuda_runtime = False
-        try:
-            result = subprocess.run(
-                ["ldconfig", "-p"], capture_output=True, text=True, timeout=5
-            )
-            if "libcublas" in result.stdout or "libcudnn" in result.stdout:
-                cuda_runtime = True
-        except Exception:
-            pass
-
-        if whisper_model.startswith("large"):
-            total_ram_gb = 0
-            try:
-                with open("/proc/meminfo") as f:
-                    for line in f:
-                        if line.startswith("MemTotal:"):
-                            total_ram_gb = int(line.split()[1]) / (1024 * 1024)
-                            break
-            except Exception:
-                pass
-            if total_ram_gb and total_ram_gb < 8:
-                print(
-                    f"  WARNING: '{whisper_model}' needs ~3-4 GB RAM. "
-                    f"This system reports {total_ram_gb:.1f} GB total RAM. "
-                    "Consider using 'tiny', 'base', or 'small' instead.",
-                    file=sys.stderr,
-                )
-            if not (nvidia_driver and cuda_runtime):
-                print(
-                    "  WARNING: large models are very slow on CPU and need a CUDA GPU for real-time. "
-                    "Consider 'medium', 'small', or 'base' for CPU inference, or install CUDA drivers.",
-                    file=sys.stderr,
-                )
-
-        if nvidia_driver and cuda_runtime:
-            print("  NVIDIA driver and CUDA runtime detected; pre-download will use GPU if faster-whisper supports it.")
-        elif nvidia_driver:
-            print(
-                "  WARNING: NVIDIA driver detected but CUDA runtime (libcublas/libcudnn) is missing. "
-                "faster-whisper will fall back to CPU.\n"
-                "  Install CUDA runtime with: sudo apt install nvidia-cuda-toolkit libcudnn8",
-                file=sys.stderr,
-            )
-        else:
-            print(
-                "  No NVIDIA GPU detected; pre-download uses CPU. "
-                "Large models will be slow without a CUDA GPU.",
-            )
-
-        print(
-            "  The model will be downloaded from Hugging Face. "
-            "For large models an HF_TOKEN is recommended for faster downloads."
-        )
-        print(f"  Download size for '{whisper_model}': see https://github.com/SYSTRAN/faster-whisper#model-size")
-        try:
-            env = _python_env()
-            # If an HF_TOKEN was collected/stored, use it for the download.
-            if hf_token:
-                env["HF_TOKEN"] = hf_token
-                print("  Using HF_TOKEN from installer prompt for model download.")
-            elif os.environ.get("HF_TOKEN"):
-                env["HF_TOKEN"] = os.environ.get("HF_TOKEN") or ""
-                print("  Using HF_TOKEN from environment for model download.")
-            print("  Downloading model... (progress will appear below)")
-            subprocess.run(
-                [
-                    str(python), "-c",
-                    "import os; "
-                    "import sys; "
-                    "from huggingface_hub import snapshot_download; "
-                    "from faster_whisper import WhisperModel; "
-                    "model = sys.argv[1]; "
-                    "repo = f'Systran/faster-whisper-{model}'; "
-                    "snapshot_download(repo, local_files_only=False); "
-                    "WhisperModel(model, device='auto', compute_type='auto')",
-                    whisper_model,
-                ],
-                check=True,
-                env=env,
-            )
-            print(f"  faster-whisper model '{whisper_model}' is ready.")
-        except subprocess.CalledProcessError as exc:
-            print(
-                f"  WARNING: failed to pre-download faster-whisper model: {exc}",
-                file=sys.stderr,
-            )
-
-    if melotts:
-        print("Pre-downloading MeloTTS English model")
-        try:
-            env = _python_env()
-            if hf_token:
-                env["HF_TOKEN"] = hf_token
-                print("  Using HF_TOKEN from installer prompt for MeloTTS download.")
-            elif os.environ.get("HF_TOKEN"):
-                env["HF_TOKEN"] = os.environ.get("HF_TOKEN") or ""
-                print("  Using HF_TOKEN from environment for MeloTTS download.")
-            print("  Downloading model... (progress will appear below)")
-            subprocess.run(
-                [
-                    str(python), "-c",
-                    "import os; "
-                    "import sys; "
-                    "from melo.api import TTS; "
-                    "model = TTS(language='EN', use_hf=True); "
-                    "print('MeloTTS EN model ready')",
-                ],
-                check=True,
-                env=env,
-            )
-            print("  MeloTTS English model is ready.")
-        except subprocess.CalledProcessError as exc:
-            print(
-                f"  WARNING: failed to pre-download MeloTTS model: {exc}",
-                file=sys.stderr,
-            )
-            print(
-                "  If the error mentions 'pkg_resources', try installing setuptools "
-                "in the Hermes environment: pip install setuptools",
-                file=sys.stderr,
-            )
-
 
 def enable_plugin_in_config(
     config_path: Path,
     add_defaults: bool,
     avatar_path: str = "",
-    voice_tts: str = "",
-    voice_model: str = "",
-    preload_whisper: bool = False,
-    whisper_model: str = "",
 ) -> None:
     if not config_path.exists():
         print(f"Config not found at {config_path}; creating minimal config")
@@ -314,43 +151,13 @@ def enable_plugin_in_config(
             config_text, avatar_path=avatar_path
         )
 
-    if voice_tts:
-        config_text = _set_config_value(config_text, "platforms", "xmpp", "voice_tts", voice_tts)
-    if voice_model:
-        config_text = _set_config_value(config_text, "platforms", "xmpp", "voice_model", voice_model)
-    if preload_whisper:
-        config_text = _set_config_value(config_text, "platforms", "xmpp", "preload_whisper", "true")
-
-    if whisper_model:
-        # Ensure STT is enabled with the chosen local model.
-        config_text = _ensure_stt_config(config_text, whisper_model)
-
     config_path.write_text(config_text)
 
 
+# Kept for backward compatibility if a caller passes the old keyword arguments,
+# but the installer no longer uses them.
 def _ensure_stt_config(config_text: str, model: str) -> str:
-    """Enable local STT in config.yaml and set the faster-whisper model."""
-    yaml, uses_ruamel = get_yaml_editor()
-    if uses_ruamel:
-        data = yaml.load(config_text)
-    else:
-        data = yaml.safe_load(config_text)
-
-    if data is None:
-        data = {}
-    if "stt" not in data or not isinstance(data["stt"], dict):
-        data["stt"] = {}
-    data["stt"]["enabled"] = True
-    data["stt"]["provider"] = "local"
-    if "local" not in data["stt"] or not isinstance(data["stt"]["local"], dict):
-        data["stt"]["local"] = {}
-    data["stt"]["local"]["model"] = model
-
-    if uses_ruamel:
-        stream = io.StringIO()
-        yaml.dump(data, stream)
-        return stream.getvalue()
-    return yaml.safe_dump(data, sort_keys=False, default_flow_style=False)
+    return config_text
 
 
 def _set_config_value(
@@ -394,14 +201,11 @@ def _set_config_value(
 def prompt_xmpp_credentials(
     args: argparse.Namespace,
     env_path: Path,
-    whisper_model: str = "",
-    with_melotts: bool = False,
-) -> tuple[str, str, str, str]:
-    """Return (jid, password, avatar_path, hf_token), prompting for missing values.
+) -> tuple[str, str, str]:
+    """Return (jid, password, avatar_path), prompting for missing values.
 
-    If the Hermes .env file already contains XMPP_USER_JID, XMPP_PASSWORD, or
-    HF_TOKEN, those values are shown as defaults; the user can press Enter to
-    keep them.
+    If the Hermes .env file already contains XMPP_USER_JID or XMPP_PASSWORD,
+    those values are shown as defaults; the user can press Enter to keep them.
     """
     defaults = _load_env_credentials(env_path)
 
@@ -444,53 +248,17 @@ def prompt_xmpp_credentials(
         )
         avatar_path = input("Avatar file path (leave blank for none): ").strip()
 
-    hf_token = ""
-    needs_hf_token = (
-        (whisper_model and whisper_model.startswith("large")) or with_melotts
-    )
-    if needs_hf_token:
-        print(
-            "\nHugging Face token (optional). Model downloads are faster "
-            "and more reliable with an HF_TOKEN. Leave blank to skip."
-        )
-        default_hf_token = defaults.get("HF_TOKEN", "")
-        if default_hf_token:
-            prompt = "HF_TOKEN [press Enter to keep existing]: "
-        else:
-            prompt = "HF_TOKEN: "
-        hf_token = getpass.getpass(prompt)
-        if not hf_token:
-            hf_token = default_hf_token
-
-    return jid, password, avatar_path, hf_token
-
-
-def _load_env_credentials(env_path: Path) -> dict[str, str]:
-    """Load existing credentials from the Hermes .env file."""
-    if not env_path.exists():
-        return {}
-    result: dict[str, str] = {}
-    for line in env_path.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        if key in ("XMPP_USER_JID", "XMPP_PASSWORD", "HF_TOKEN"):
-            result[key] = value.strip().strip('"\'')
-    return result
+    return jid, password, avatar_path
 
 
 def append_env_credentials(
     env_path: Path,
     jid: str,
     password: str,
-    hf_token: str = "",
 ) -> None:
     """Append credentials to the Hermes .env file if not already present.
 
-    Stores XMPP_JID, XMPP_PASSWORD, and optionally HF_TOKEN. Never writes
-    secrets to config.yaml.
+    Stores XMPP_JID and XMPP_PASSWORD. Never writes secrets to config.yaml.
     """
     lines: list[str] = []
     if env_path.exists():
@@ -505,8 +273,6 @@ def append_env_credentials(
         additions.append(f'XMPP_USER_JID="{jid}"')
     if "XMPP_PASSWORD" not in existing_keys:
         additions.append(f'XMPP_PASSWORD="{password}"')
-    if hf_token and "HF_TOKEN" not in existing_keys:
-        additions.append(f'HF_TOKEN="{hf_token}"')
 
     if not additions:
         return
@@ -516,6 +282,22 @@ def append_env_credentials(
     else:
         env_path.write_text("\n".join(additions) + "\n")
     print(f"Appended credentials to {env_path}")
+
+
+def _load_env_credentials(env_path: Path) -> dict[str, str]:
+    """Load existing credentials from the Hermes .env file."""
+    if not env_path.exists():
+        return {}
+    result: dict[str, str] = {}
+    for line in env_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key in ("XMPP_USER_JID", "XMPP_PASSWORD"):
+            result[key] = value.strip().strip('"\'')
+    return result
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
@@ -546,45 +328,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--only-required-deps",
         action="store_true",
-        help="Install only required dependencies; skip optional ones (OMEMO, voice)",
-    )
-    parser.add_argument(
-        "--with-whisper",
-        metavar="MODEL",
-        nargs="?",
-        const=DEFAULT_WHISPER_MODEL,
-        default=None,
-        choices=WHISPER_MODELS,
-        help=(
-            "Install faster-whisper and enable local STT. "
-            "MODEL can be one of: tiny, base, small, medium, large-v1, large-v2, large-v3. "
-            "If no model is specified, defaults to tiny."
-        ),
-    )
-    parser.add_argument(
-        "--with-melotts",
-        action="store_true",
-        help="Install MeloTTS for high-quality local text-to-speech voice replies",
-    )
-    parser.add_argument(
-        "--preload-whisper",
-        action="store_true",
-        help="Preload the faster-whisper model in the background when the gateway connects",
-    )
-    parser.add_argument(
-        "--voice-tts",
-        choices=("edge", "melo"),
-        default=None,
-        help="Set platforms.xmpp.voice_tts in config.yaml (default: edge). Use 'melo' with --with-melotts.",
-    )
-    parser.add_argument(
-        "--voice-model",
-        metavar="MODEL",
-        default=None,
-        help=(
-            "Set platforms.xmpp.voice_model in config.yaml. For MeloTTS this can be "
-            "a speaker name such as EN-Default, EN-US, EN-BR, EN-AU, EN-IN."
-        ),
+        help="Install only required dependencies; skip optional ones (e.g. OMEMO)",
     )
     parser.add_argument(
         "--no-defaults",
@@ -651,12 +395,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     env_path = profile_dir / ".env"
 
-    # Prompt for credentials before any download so that secrets (HF_TOKEN)
-    # are available when we pre-download the Whisper model.
     jid = ""
     password = ""
     avatar_path = ""
-    hf_token = ""
     if not args.no_defaults:
         if args.non_interactive:
             if not args.jid or not args.password:
@@ -664,38 +405,14 @@ def main(argv: Optional[list[str]] = None) -> int:
             jid = args.jid
             password = args.password
             avatar_path = args.avatar_path or ""
-            if args.with_whisper and args.with_whisper.startswith("large"):
-                print(
-                    "WARNING: --with-whisper large* models may need HF_TOKEN for reliable downloads. "
-                    "Set HF_TOKEN in the .env file manually, or run interactively.",
-                    file=sys.stderr,
-                )
-            if args.with_melotts:
-                print(
-                    "WARNING: --with-melotts downloads models from Hugging Face. "
-                    "Set HF_TOKEN in the .env file manually for faster downloads, or run interactively.",
-                    file=sys.stderr,
-                )
         else:
-            jid, password, avatar_path, hf_token = prompt_xmpp_credentials(
-                args, env_path,
-                whisper_model=args.with_whisper,
-                with_melotts=args.with_melotts,
-            )
-
-    # If we collected an HF_TOKEN during credential prompting, write it to
-    # .env immediately so the model pre-download can use it.
-    if hf_token and env_path.exists():
-        append_env_credentials(env_path, jid, password, hf_token=hf_token)
+            jid, password, avatar_path = prompt_xmpp_credentials(args, env_path)
 
     copy_plugin(plugin_src, plugin_dest, force=args.force)
     install_dependencies(
         python,
         plugin_dest,
         only_required=args.only_required_deps,
-        whisper_model=args.with_whisper,
-        melotts=args.with_melotts,
-        hf_token=hf_token,
     )
 
     if config_path.exists():
@@ -706,23 +423,22 @@ def main(argv: Optional[list[str]] = None) -> int:
         config_path,
         add_defaults=not args.no_defaults,
         avatar_path=avatar_path,
-        voice_tts=args.voice_tts or ("melo" if args.with_melotts else "edge"),
-        voice_model=args.voice_model or ("EN-Default" if args.with_melotts else "en-US-AriaNeural"),
-        preload_whisper=args.preload_whisper,
-        whisper_model=args.with_whisper,
     )
 
     if not args.no_defaults and jid and password:
-        append_env_credentials(env_path, jid, password, hf_token=hf_token)
+        append_env_credentials(env_path, jid, password)
         print("  XMPP credentials stored in .env (not config.yaml).")
 
     print("\nInstallation complete.")
-    if args.with_whisper:
-        print(f"Local STT enabled with faster-whisper model: {args.with_whisper}")
-    if args.preload_whisper:
-        print("faster-whisper will be preloaded in the background when the gateway connects.")
-    if args.with_melotts:
-        print("Local TTS enabled with MeloTTS.")
+    print("Configure STT/TTS in Hermes core config.yaml:")
+    print("  stt:")
+    print("    provider: local")
+    print("    local:")
+    print("      model: medium")
+    print("  voice:")
+    print("    auto_tts: true")
+    print("  tts:")
+    print("    provider: edge")
     print("Restart the Hermes gateway to load the plugin:")
     print("  hermes gateway restart")
     return 0
