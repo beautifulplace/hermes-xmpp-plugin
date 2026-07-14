@@ -91,3 +91,22 @@ def test_add_voice_and_stt_defaults_preserves_existing():
     result = add_voice_and_stt_defaults(config)
     assert "auto_tts: false" in result
     assert "auto_tts: true" not in result
+
+
+def test_add_voice_and_stt_defaults_fills_missing_provider_keys():
+    """Fresh Hermes install may add stt/tts blocks without provider keys."""
+    config = """tts:
+  use_gateway: false
+stt:
+  enabled: true
+  local:
+    model: base
+  openai:
+    model: whisper-1
+"""
+    result = add_voice_and_stt_defaults(config)
+    assert "stt.provider: local" not in result  # not dotted
+    assert "tts:\n  provider: edge\n  use_gateway: false" in result
+    assert "stt:\n  provider: local\n  enabled: true" in result
+    assert "voice:\n  auto_tts: true" in result
+    assert result.count("provider:") == 2

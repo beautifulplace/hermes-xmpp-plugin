@@ -278,22 +278,59 @@ def add_default_xmpp_config(config_text: str, avatar_path: str = "") -> str:
 def add_voice_and_stt_defaults(config_text: str) -> str:
     '''Ensure voice/TTS/STT defaults required for XMPP voice replies exist.
 
-    Adds a minimal voice/TTS/STT block if missing. Existing user settings are
-    preserved.
+    Adds missing top-level blocks and fills in missing provider/auto_tts keys
+    when the block already exists. Existing user settings are preserved.
     '''
-    # STT defaults (voice messages need transcription)
-    if "stt:" not in config_text:
-        config_text = config_text.rstrip() + "\n\nstt:\n  enabled: true\n  provider: local\n  local:\n    model: tiny\n"
+    config_text = _ensure_block(config_text, "stt", "enabled: true\n  provider: local\n  local:\n    model: tiny")
+    config_text = _ensure_key_in_block(config_text, "stt", "provider", "local")
 
-    # TTS defaults (voice replies need a provider)
-    if "tts:" not in config_text:
-        config_text = config_text.rstrip() + "\n\ntts:\n  provider: edge\n  use_gateway: false\n"
+    config_text = _ensure_block(config_text, "tts", "provider: edge\n  use_gateway: false")
+    config_text = _ensure_key_in_block(config_text, "tts", "provider", "edge")
 
-    # Voice auto-TTS default
-    if "voice:" not in config_text:
-        config_text = config_text.rstrip() + "\n\nvoice:\n  auto_tts: true\n"
+    config_text = _ensure_block(config_text, "voice", "auto_tts: true")
+    config_text = _ensure_key_in_block(config_text, "voice", "auto_tts", "true")
 
     return config_text
+
+
+def _ensure_block(config_text: str, key: str, body: str) -> str:
+    """Add a top-level YAML block if it does not exist."""
+    if not re.search(rf"^{re.escape(key)}:\s*$", config_text, re.MULTILINE):
+        config_text = config_text.rstrip() + f"\n\n{key}:\n  {body}\n"
+    return config_text
+
+
+def _ensure_key_in_block(config_text: str, key: str, option: str, value: str) -> str:
+    """Add a key/value under a top-level block if the key is missing."""
+    pattern = re.compile(rf"^{re.escape(key)}:\s*$", re.MULTILINE)
+    match = pattern.search(config_text)
+    if not match:
+        return config_text
+
+    lines = config_text.splitlines()
+    start = config_text[:match.start()].count("\n")
+    key_indent = len(lines[start]) - len(lines[start].lstrip())
+
+    # Scan the block to see whether the option already exists.
+    has_option = False
+    for i in range(start + 1, len(lines)):
+        line = lines[i]
+        if line.strip() == "":
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent <= key_indent and not line.lstrip().startswith("#"):
+            break
+        stripped = line.lstrip()
+        if stripped.startswith(f"{option}:"):
+            has_option = True
+            break
+
+    if has_option:
+        return config_text
+
+    # Insert the option after the key line, preserving existing body.
+    lines.insert(start + 1, f"{' ' * (key_indent + 2)}{option}: {value}")
+    return "\n".join(lines) + "\n"
 
 def remove_xmpp_config(config_text: str) -> str:
     """Remove the platforms.xmpp block from config.yaml."""
