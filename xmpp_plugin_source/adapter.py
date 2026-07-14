@@ -220,6 +220,9 @@ class XMPPAdapter(BasePlatformAdapter):
         self.voice_format = (
             os.getenv("XMPP_VOICE_FORMAT") or extra.get("voice_format") or "m4a"
         ).lower().lstrip(".")
+        self.preload_whisper = _parse_bool(
+            os.getenv("XMPP_PRELOAD_WHISPER") or extra.get("preload_whisper"), False
+        )
         self.home_channel = os.getenv("XMPP_HOME_CHANNEL") or extra.get("home_channel", "")
 
         self._session_started_event = asyncio.Event()
@@ -376,6 +379,70 @@ class XMPPAdapter(BasePlatformAdapter):
             logger.info("XMPP: publishing avatar from %s", self.avatar_path)
             await self._publish_avatar()
             self._schedule_avatar_republish()
+        if self.preload_whisper:
+            asyncio.create_task(self._preload_whisper_model())
+
+    async def _preload_whisper_model(self):
+        """Warm the local faster-whisper model via the Hermes core STT path.
+
+        The core STT tool lazy-loads the model on first transcription, which can
+        make the first voice message time out with large models. We generate a
+        short silent audio file and run it through the core transcribe_audio tool
+        in a background thread so that subsequent voice messages hit a warm model.
+        """
+        try:
+            stt_config = self._load_hermes_stt_config()
+            if not stt_config or stt_config.get("provider") != "local":
+                logger.debug("XMPP: STT not configured for local provider; skipping whisper preload")
+                return
+            model_name = (stt_config.get("local") or {}).get("model") or "tiny"
+            logger.info("XMPP: preloading faster-whisper model '%s' via core STT path", model_name)
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmpdir = Path(tmpdir)
+                dummy_wav = tmpdir / "silent.wav"
+                proc = await asyncio.create_subprocess_exec(
+                    "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
+                    "-t", "1", "-acodec", "pcm_s16le", str(dummy_wav),
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await proc.communicate()
+                if proc.returncode != 0 or not dummy_wav.exists():
+                    logger.warning("XMPP: failed to create dummy audio for preload: %s", stderr.decode().strip()[-200:] if stderr else "unknown")
+                    return
+
+                loop = asyncio.get_running_loop()
+                result = await loop.run_in_executor(
+                    None,
+                    self._call_core_transcribe,
+                    str(dummy_wav),
+                )
+                if result and result.get("success"):
+                    logger.info("XMPP: faster-whisper model '%s' preloaded successfully", model_name)
+                else:
+                    logger.warning("XMPP: dummy transcription during preload returned: %s", result)
+        except Exception as exc:
+            logger.warning("XMPP: failed to preload faster-whisper model: %s", exc)
+
+    def _call_core_transcribe(self, file_path: str) -> dict[str, Any]:
+        """Call the Hermes core transcription tool to warm the model."""
+        try:
+            from tools.transcription_tools import transcribe_audio
+            return transcribe_audio(file_path)
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
+
+    def _load_hermes_stt_config(self) -> dict[str, Any]:
+        """Read stt config from the Hermes config.yaml."""
+        try:
+            config_path = Path.home() / ".hermes" / "config.yaml"
+            import yaml
+            with open(config_path) as f:
+                data = yaml.safe_load(f) or {}
+            return data.get("stt", {})
+        except Exception:
+            return {}
 
     def _schedule_avatar_republish(self) -> None:
         """Schedule a one-time avatar republish in case the first attempt did not propagate."""
