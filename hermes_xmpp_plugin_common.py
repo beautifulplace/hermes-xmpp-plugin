@@ -17,6 +17,23 @@ from typing import Optional
 DEFAULT_HERMES_HOME = Path.home() / ".hermes"
 
 
+def get_yaml_editor():
+    """Return a YAML loader/dumper and a flag indicating whether it is ruamel.yaml."""
+    try:
+        from ruamel.yaml import YAML
+        yaml = YAML()
+        yaml.preserve_quotes = True
+        return yaml, True
+    except ImportError:
+        pass
+    try:
+        import yaml
+        return yaml, False
+    except ImportError:
+        pass
+    return None, False
+
+
 def get_hermes_home(cli_value: Optional[str] = None) -> Path:
     """Resolve the Hermes home directory.
 
