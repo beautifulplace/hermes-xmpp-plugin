@@ -248,7 +248,8 @@ def add_default_xmpp_config(config_text: str, avatar_path: str = "") -> str:
     omemo_allow_untrusted: true
     typing_indicator: true
     voice_reply: false
-    voice_model: en-GB-SoniaNeural
+    voice_tts: edge
+    voice_model: en-US-AriaNeural
     voice_format: m4a
     avatar_path: "{avatar_path}"
     home_channel: ""
@@ -271,13 +272,15 @@ def add_default_xmpp_config(config_text: str, avatar_path: str = "") -> str:
     omemo_allow_untrusted: true
     typing_indicator: true
     voice_reply: false
-    voice_model: en-GB-SoniaNeural
+    voice_tts: edge
+    voice_model: en-US-AriaNeural
     voice_format: m4a
     avatar_path: "{avatar_path}"
     home_channel: ""
     allow_all_users: false
 """
     return config_text.rstrip() + "\n\n" + default_block + "\n"
+
 
 
 def remove_xmpp_config(config_text: str) -> str:

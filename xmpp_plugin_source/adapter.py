@@ -164,6 +164,9 @@ class XMPPAdapter(BasePlatformAdapter):
         self.voice_language = (
             os.getenv("XMPP_VOICE_LANGUAGE") or extra.get("voice_language") or "en-US"
         )
+        self.voice_tts = (
+            os.getenv("XMPP_VOICE_TTS") or extra.get("voice_tts") or "edge"
+        ).lower()
         self.voice_model = (
             os.getenv("XMPP_VOICE_MODEL") or extra.get("voice_model") or "en-US-AriaNeural"
         )
@@ -533,14 +536,57 @@ class XMPPAdapter(BasePlatformAdapter):
             return SendResult(success=False, error=str(exc))
 
     async def _synthesize_speech(self, text: str) -> Optional[bytes]:
+        if self.voice_tts == "melo":
+            return await self._synthesize_speech_melo(text)
+        return await self._synthesize_speech_edge(text)
+
+
+    async def _synthesize_speech_edge(self, text: str) -> Optional[bytes]:
         try:
             import edge_tts
             communicate = edge_tts.Communicate(text, self.voice_model)
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
                 mp3_path = Path(tmp.name)
             await communicate.save(str(mp3_path))
+            return await self._transcode_to_voice_format(mp3_path)
+        except Exception as exc:
+            logger.warning("XMPP: TTS synthesis failed: %s", exc)
+            return None
 
-            fmt = (self.voice_format or "m4a").lower().lstrip(".")
+
+    async def _synthesize_speech_melo(self, text: str) -> Optional[bytes]:
+        try:
+            from melo.api import TTS
+
+            loop = asyncio.get_running_loop()
+            # MeloTTS is CPU-bound; run it in a thread pool so we don't block the gateway loop.
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmpdir = Path(tmpdir)
+                wav_path = tmpdir / "melo.wav"
+                model = TTS(language="EN", use_hf=True)
+                speaker_ids = model.hps.data.spk2id
+                # Default to a neutral English speaker. Use XMPP_VOICE_MODEL env/config if provided.
+                speaker = self.voice_model if self.voice_model in speaker_ids else "EN-Default"
+                await loop.run_in_executor(
+                    None,
+                    model.tts_to_file,
+                    text,
+                    speaker_ids[speaker],
+                    str(wav_path),
+                    speed=1.0,
+                )
+                if not wav_path.exists() or wav_path.stat().st_size == 0:
+                    logger.warning("XMPP: MeloTTS produced no audio")
+                    return None
+                return await self._transcode_to_voice_format(wav_path)
+        except Exception as exc:
+            logger.warning("XMPP: MeloTTS synthesis failed: %s", exc)
+            return None
+
+
+    async def _transcode_to_voice_format(self, source_path: Path) -> Optional[bytes]:
+        try:
+            fmt = self.voice_format
             if fmt not in ("m4a", "mp4", "opus", "ogg", "oga"):
                 fmt = "m4a"
 
@@ -549,9 +595,9 @@ class XMPPAdapter(BasePlatformAdapter):
 
             ext = ext_map[fmt]
             codec = codec_map[fmt]
-            out_path = mp3_path.with_suffix(ext)
+            out_path = source_path.with_suffix(ext)
 
-            args = ["ffmpeg", "-y", "-i", str(mp3_path), "-c:a", codec, "-b:a", "24k"]
+            args = ["ffmpeg", "-y", "-i", str(source_path), "-c:a", codec, "-b:a", "24k"]
             if codec == "libopus":
                 args.extend(["-vbr", "on", "-application", "voip"])
             args.append(str(out_path))
@@ -562,7 +608,7 @@ class XMPPAdapter(BasePlatformAdapter):
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout, stderr = await proc.communicate()
-            mp3_path.unlink(missing_ok=True)
+            source_path.unlink(missing_ok=True)
 
             if proc.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0:
                 data = out_path.read_bytes()
@@ -572,7 +618,7 @@ class XMPPAdapter(BasePlatformAdapter):
             logger.warning("XMPP: ffmpeg %s transcode failed: %s", fmt, stderr.decode().strip()[-200:] if stderr else "unknown")
             return None
         except Exception as exc:
-            logger.warning("XMPP: TTS synthesis failed: %s", exc)
+            logger.warning("XMPP: audio transcode failed: %s", exc)
             return None
 
 
@@ -1023,7 +1069,7 @@ def register(ctx):
         validate_config=validate_config,
         is_connected=is_connected,
         required_env=["XMPP_USER_JID", "XMPP_PASSWORD"],
-        install_hint="pip install slixmpp slixmpp-omemo httpx Pillow cryptography edge-tts",
+        install_hint="pip install slixmpp slixmpp-omemo httpx Pillow cryptography edge-tts melotts",
         setup_fn=interactive_setup,
         env_enablement_fn=_env_enablement,
         apply_yaml_config_fn=_apply_yaml_config,
