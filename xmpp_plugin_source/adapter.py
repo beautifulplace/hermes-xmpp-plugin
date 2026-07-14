@@ -881,6 +881,11 @@ class XMPPAdapter(BasePlatformAdapter):
                         display_text = stripped
                     else:
                         display_text = "(voice message)"
+                    logger.info(
+                        "XMPP: routing voice message via media_urls: path=%s text=%r",
+                        media_path,
+                        display_text,
+                    )
                 else:
                     display_text = body.replace(url, media_path)
                     if display_text == body:
