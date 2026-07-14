@@ -915,6 +915,13 @@ class XMPPAdapter(BasePlatformAdapter):
                 media_types=media_types,
                 metadata={"encrypted": encrypted, "media_url": url, "media_path": media_path},
             )
+
+            # If the global voice.auto_tts default is on, opt this DM chat into
+            # auto-TTS replies. Without this, _should_send_voice_reply stays off
+            # because XMPP has no /voice command UI to set per-chat voice mode.
+            if getattr(self, "_auto_tts_default", False):
+                getattr(self, "_auto_tts_enabled_chats", set()).add(sender_bare)
+
             await self.handle_message(event)
         except Exception:
             logger.exception("XMPP: unhandled error in message handler")
