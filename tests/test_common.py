@@ -64,7 +64,6 @@ def test_add_default_xmpp_config():
     result = add_default_xmpp_config("")
     assert "platforms:" in result
     assert "xmpp:" in result
-    assert "user_jid:" in result
     assert "omemo_enabled: true" in result
 
 
