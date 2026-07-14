@@ -882,20 +882,25 @@ class XMPPAdapter(BasePlatformAdapter):
                                 "XMPP: transcribed voice message: %r",
                                 display_text,
                             )
-                            # Treat as a normal text message; no media_urls needed.
-                            msg_type = MessageType.TEXT
+                            # Keep msg_type as VOICE so the gateway's auto-TTS reply
+                            # path fires. No media_urls means it won't be re-processed
+                            # as an audio attachment.
                         else:
                             error = result.get("error", "unknown error")
                             logger.warning("XMPP: voice transcription failed: %s", error)
                             display_text = stripped or "(voice message could not be transcribed)"
+                            msg_type = MessageType.TEXT
                     except Exception as exc:
                         logger.warning("XMPP: voice transcription error: %s", exc)
                         display_text = stripped or "(voice message could not be transcribed)"
+                        msg_type = MessageType.TEXT
                 else:
                     display_text = body.replace(url, media_path)
                     if display_text == body:
                         # URL not in body (e.g. only in oob); use a direct note.
                         display_text = f"{body}\n[Attached media: {media_path}]".strip()
+                    media_urls = [media_path]
+                    media_types = [content_type]
 
             source = self.build_source(
                 chat_id=sender_bare,
