@@ -6,6 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from hermes_xmpp_plugin_common import (
     add_default_xmpp_config,
+    add_voice_and_stt_defaults,
     disable_plugin,
     enable_plugin,
     get_hermes_home,
@@ -72,3 +73,21 @@ def test_add_default_xmpp_config_existing_platforms():
     result = add_default_xmpp_config(config)
     assert "xmpp:" in result
     assert "mattermost:" in result
+
+
+def test_add_voice_and_stt_defaults():
+    result = add_voice_and_stt_defaults("")
+    assert "voice:" in result
+    assert "auto_tts: true" in result
+    assert "tts:" in result
+    assert "provider: edge" in result
+    assert "stt:" in result
+    assert "enabled: true" in result
+    assert "provider: local" in result
+
+
+def test_add_voice_and_stt_defaults_preserves_existing():
+    config = "voice:\n  auto_tts: false\n"
+    result = add_voice_and_stt_defaults(config)
+    assert "auto_tts: false" in result
+    assert "auto_tts: true" not in result
