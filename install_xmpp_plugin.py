@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import getpass
-import io
 import os
 import re
 import shutil
@@ -26,7 +25,6 @@ from hermes_xmpp_plugin_common import (
     get_hermes_home,
     get_hermes_python,
     get_profile_dir,
-    get_yaml_editor,
 )
 
 REQUIRED_PLUGIN_FILES = {
