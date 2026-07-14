@@ -1,6 +1,6 @@
 # XMPP Platform Adapter
 
-A clean, production-ready XMPP gateway adapter for [Hermes Agent](https://github.com/NousResearch/hermes-agent). It connects to an XMPP server using `slixmpp` and routes messages between XMPP users and the agent, with OMEMO end-to-end encryption enabled by default.
+XMPP gateway adapter for [Hermes Agent](https://github.com/NousResearch/hermes-agent). Connects to an XMPP server using `slixmpp` and routes messages between XMPP users and the agent, with OMEMO end-to-end encryption enabled by default.
 
 ## Enabling the Plugin
 

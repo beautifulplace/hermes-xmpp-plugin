@@ -1,16 +1,17 @@
 # Hermes XMPP Platform Plugin
 
-A polished, production-ready XMPP gateway adapter for [Hermes Agent](https://github.com/NousResearch/hermes-agent). It connects the agent to an XMPP server, routes plain-text or OMEMO-encrypted messages, handles inbound/outbound media, and integrates with Hermes core STT and TTS for voice messages.
+XMPP gateway adapter for [Hermes Agent](https://github.com/NousResearch/hermes-agent). Connects the agent to an XMPP server, routes messages, supports inbound/outbound media, OMEMO end-to-end encryption by default, and voice/audio messages via the Hermes core TTS/STT configuration.
 
 ## Features
 
-- **Messaging**: OMEMO end-to-end encryption by default (plain-text fallback)
-- **Typing indicators**: XEP-0085 Chat State Notifications
-- **Read receipts**: XEP-0333 Chat Markers
-- **Media**: XEP-0066 / XEP-0363 inbound images, files, and voice messages
-- **OMEMO media sharing**: decrypts `aesgcm://` URLs used by clients such as Conversations
-- **Avatars**: publishes XEP-0084 user avatars
-- **Voice/audio**: delegates STT and TTS to Hermes core; the adapter uploads and delivers the resulting audio
+- OMEMO-encrypted messaging (default; plain-text fallback)
+- XEP-0085 typing indicators
+- XEP-0333 read receipts / chat markers
+- XEP-0066 / XEP-0363 inbound images, files, and voice messages
+- `aesgcm://` OMEMO media sharing decryption
+- XEP-0084 avatar publishing
+- Outgoing voice/audio messages via Hermes core TTS
+- Inbound voice-message transcription via Hermes core STT
 
 ## Requirements
 
@@ -140,7 +141,7 @@ tts:
   provider: edge
 ```
 
-Set `voice.auto_tts: true` to reply with voice to voice messages, or use the chat `/voice on` command. TTS provider selection is handled by Hermes core.
+Set `voice.auto_tts: true` to reply with voice to voice messages, or use the chat `/voice on` command. Available TTS providers are configured by Hermes (`edge`, `elevenlabs`, `openai`, `minimax`, `mistral`, `gemini`, `xai`, `neutts`, `kittentts`, or custom command providers). Run `hermes setup` or edit `config.yaml` to choose a provider.
 
 ## Uninstallation
 

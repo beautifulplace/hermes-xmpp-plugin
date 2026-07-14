@@ -3,9 +3,4 @@ slixmpp
 httpx
 Pillow
 cryptography
-
-# OMEMO end-to-end encryption is enabled by default.
 slixmpp-omemo
-
-# STT and TTS are handled by Hermes core.
-# Do not add faster-whisper, edge-tts, or MeloTTS here.
