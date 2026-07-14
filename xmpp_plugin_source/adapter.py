@@ -876,7 +876,11 @@ class XMPPAdapter(BasePlatformAdapter):
                     # local file path.
                     media_urls = [media_path]
                     media_types = ["audio/mpeg"]
-                    display_text = body.replace(url, "").strip()
+                    stripped = body.replace(url, "").strip()
+                    if stripped:
+                        display_text = stripped
+                    else:
+                        display_text = "(voice message)"
                 else:
                     display_text = body.replace(url, media_path)
                     if display_text == body:
