@@ -227,8 +227,12 @@ def disable_plugin(config_text: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def add_default_xmpp_config(config_text: str, jid: str = "", password: str = "", avatar_path: str = "") -> str:
-    """Add a default platforms.xmpp block if one does not exist."""
+def add_default_xmpp_config(config_text: str, avatar_path: str = "") -> str:
+    """Add a default platforms.xmpp block if one does not exist.
+
+    Credentials are intentionally NOT written into config.yaml; they are stored
+    in the Hermes .env file instead.
+    """
     if re.search(r"^platforms:\s*$", config_text, re.MULTILINE):
         # platforms block exists.
         start, end = _find_block_bounds(config_text, "platforms")
@@ -238,8 +242,8 @@ def add_default_xmpp_config(config_text: str, jid: str = "", password: str = "",
 
         default_xmpp = f"""\n  xmpp:
     enabled: true
-    user_jid: "{jid}"
-    password: "{password}"
+    user_jid: ""
+    password: ""
     omemo_enabled: true
     omemo_allow_untrusted: true
     typing_indicator: true
@@ -261,8 +265,8 @@ def add_default_xmpp_config(config_text: str, jid: str = "", password: str = "",
     default_block = f"""platforms:
   xmpp:
     enabled: true
-    user_jid: "{jid}"
-    password: "{password}"
+    user_jid: ""
+    password: ""
     omemo_enabled: true
     omemo_allow_untrusted: true
     typing_indicator: true
