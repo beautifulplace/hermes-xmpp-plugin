@@ -41,6 +41,24 @@ Then restart the Hermes gateway:
 hermes gateway restart
 ```
 
+### GPU acceleration (CUDA)
+
+If the host has an NVIDIA GPU and the CUDA runtime installed, faster-whisper will use the GPU automatically (`device='auto'`). To set this up on Debian/Ubuntu:
+
+```bash
+sudo apt update
+sudo apt install nvidia-driver-550 nvidia-cuda-toolkit libcudnn8
+```
+
+Then reinstall the plugin so faster-whisper can pick the CUDA-enabled `ctranslate2` wheel:
+
+```bash
+cd hermes-xmpp-plugin
+python3 install_xmpp_plugin.py --force --with-whisper large-v3
+```
+
+The installer detects `nvidia-smi` and `libcublas`/`libcudnn`; it prints a warning if the driver is present but the CUDA runtime is missing. Without a CUDA GPU, `large-v3` is not practical for real-time transcription; use `medium` or smaller.
+
 ### Optional: enable high-quality local TTS for voice replies
 
 By default, outgoing voice replies use `edge-tts` (cloud voices from Microsoft Edge). For a local, higher-quality alternative, install [MeloTTS](https://github.com/myshell-ai/MeloTTS):
