@@ -271,6 +271,30 @@ def add_default_xmpp_config(config_text: str, avatar_path: str = "") -> str:
 
 
 
+
+
+
+
+def add_voice_and_stt_defaults(config_text: str) -> str:
+    '''Ensure voice/TTS/STT defaults required for XMPP voice replies exist.
+
+    Adds a minimal voice/TTS/STT block if missing. Existing user settings are
+    preserved.
+    '''
+    # STT defaults (voice messages need transcription)
+    if "stt:" not in config_text:
+        config_text = config_text.rstrip() + "\n\nstt:\n  enabled: true\n  provider: local\n  local:\n    model: tiny\n"
+
+    # TTS defaults (voice replies need a provider)
+    if "tts:" not in config_text:
+        config_text = config_text.rstrip() + "\n\ntts:\n  provider: edge\n  use_gateway: false\n"
+
+    # Voice auto-TTS default
+    if "voice:" not in config_text:
+        config_text = config_text.rstrip() + "\n\nvoice:\n  auto_tts: true\n"
+
+    return config_text
+
 def remove_xmpp_config(config_text: str) -> str:
     """Remove the platforms.xmpp block from config.yaml."""
     start, end = _find_block_bounds(config_text, "platforms")

@@ -20,6 +20,7 @@ from typing import NoReturn, Optional
 
 from hermes_xmpp_plugin_common import (
     add_default_xmpp_config,
+    add_voice_and_stt_defaults,
     backup_file,
     enable_plugin,
     get_hermes_home,
@@ -141,6 +142,7 @@ def enable_plugin_in_config(
         config_text = add_default_xmpp_config(
             config_text, avatar_path=avatar_path
         )
+        config_text = add_voice_and_stt_defaults(config_text)
 
     config_path.write_text(config_text)
 
@@ -192,7 +194,7 @@ def _set_config_value(
 def prompt_xmpp_credentials(
     args: argparse.Namespace,
     env_path: Path,
-) -> tuple[str, str, str]:
+):
     """Return (jid, password, avatar_path), prompting for missing values.
 
     If the Hermes .env file already contains XMPP_USER_JID or XMPP_PASSWORD,
@@ -415,11 +417,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         print("  XMPP credentials stored in .env (not config.yaml).")
 
     print("\nInstallation complete.")
-    print("Configure STT/TTS in Hermes core config.yaml:")
+    print("Voice-message defaults were added to config.yaml:")
     print("  stt:")
+    print("    enabled: true")
     print("    provider: local")
     print("    local:")
-    print("      model: medium")
+    print("      model: tiny")
     print("  voice:")
     print("    auto_tts: true")
     print("  tts:")
