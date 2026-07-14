@@ -99,12 +99,6 @@ stt:
 
 Hermes uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper) for local STT. Install the model through the Hermes setup flow or by installing `faster-whisper` into the Hermes environment.
 
-For a Raspberry Pi 4 with 8 GB RAM, use `tiny` or `base`. On a desktop with a CUDA GPU (e.g. RTX 3050 Mobile), `medium` or `large-v3` work well after installing the NVIDIA driver and CUDA runtime:
-
-```bash
-sudo apt install nvidia-driver-550 nvidia-cuda-toolkit libcudnn8
-```
-
 ### Outgoing voice replies (TTS)
 
 ```yaml
