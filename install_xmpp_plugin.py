@@ -145,7 +145,8 @@ def install_dependencies(
             )
             print("  melotts: already installed")
         except subprocess.CalledProcessError:
-            to_install.append("git+https://github.com/myshell-ai/MeloTTS.git")
+            # setuptools/pkg_resources is required by librosa inside MeloTTS.
+            to_install.extend(["setuptools", "git+https://github.com/myshell-ai/MeloTTS.git"])
 
     if to_install:
         print(
@@ -282,6 +283,11 @@ def install_dependencies(
         except subprocess.CalledProcessError as exc:
             print(
                 f"  WARNING: failed to pre-download MeloTTS model: {exc}",
+                file=sys.stderr,
+            )
+            print(
+                "  If the error mentions 'pkg_resources', try installing setuptools "
+                "in the Hermes environment: pip install setuptools",
                 file=sys.stderr,
             )
 
