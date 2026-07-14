@@ -7,16 +7,11 @@ import tempfile
 import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
 import httpx
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from PIL import Image
-from slixmpp import ClientXMPP, JID
-from slixmpp.plugins.base import register_plugin
-from slixmpp.stanza import Message
-
 from gateway.config import Platform
 from gateway.platforms.base import (
     BasePlatformAdapter,
@@ -26,6 +21,10 @@ from gateway.platforms.base import (
     cache_media_bytes,
     validate_inbound_media_size,
 )
+from PIL import Image
+from slixmpp import JID, ClientXMPP
+from slixmpp.plugins.base import register_plugin
+from slixmpp.stanza import Message
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +52,30 @@ def _is_audio_url(url: str) -> bool:
     return any(url.lower().endswith(ext) for ext in (
         ".ogg", ".oga", ".mp3", ".m4a", ".webm", ".wav", ".opus", ".mp4"
     ))
+
+
+def _is_voice_url(url: str) -> bool:
+    """Return True if the URL looks like a voice message rather than a generic audio file."""
+    lowered = url.lower()
+    # Conversations and similar clients often use voice-message-* filenames.
+    if "voice-message" in lowered:
+        return True
+    # Container formats commonly used for voice messages.
+    return any(lowered.endswith(ext) for ext in (".ogg", ".oga", ".opus", ".webm"))
+
+
+def _guess_audio_is_voice(url: str, body: str) -> bool:
+    """Heuristic to decide if an incoming audio URL is a voice message."""
+    lowered = url.lower()
+    # aesgcm:// URLs are only used for OMEMO media sharing in XMPP clients,
+    # and audio uploads that way are almost always voice messages.
+    if url.startswith("aesgcm://"):
+        return True
+    # Conversations and similar clients often use voice-message-* filenames.
+    if "voice-message" in lowered:
+        return True
+    # Container formats commonly used for voice messages.
+    return any(lowered.endswith(ext) for ext in (".ogg", ".oga", ".opus", ".webm"))
 
 
 class XMPPAdapter(BasePlatformAdapter):
@@ -121,6 +144,7 @@ class XMPPAdapter(BasePlatformAdapter):
         self.client: Optional[ClientXMPP] = None
         self._http = httpx.AsyncClient(timeout=300.0, follow_redirects=True)
         self._keepalive_task: Optional[asyncio.Task] = None
+        self._avatar_republish_task: Optional[asyncio.Task] = None
         self._last_activity: float = 0.0
         self._ping_interval = 30.0
         self._ping_timeout = 10.0
@@ -179,11 +203,27 @@ class XMPPAdapter(BasePlatformAdapter):
         self._omemo_ready_event.clear()
 
         try:
-            self.client = ClientXMPP(self.user_jid, self.password)
+            # Use a fixed Hermes resource if none was provided, and advertise
+            # a service-discovery identity so XMPP clients label the account
+            # as "Hermes" in tooltips/contact lists.
+            jid_str = self.user_jid
+            if "/" not in jid_str:
+                jid_str = f"{jid_str}/Hermes"
+            self.client = ClientXMPP(jid_str, self.password)
             self.client.use_message_ids = True
+            self.client.register_plugin("xep_0030")  # Service discovery
+            try:
+                disco = self.client.plugin.get("xep_0030")
+                if disco is not None:
+                    disco.add_identity(
+                        category="client",
+                        itype="pc",
+                        name="Hermes",
+                    )
+            except Exception as exc:
+                logger.debug("XMPP: could not set disco identity: %s", exc)
 
             self.client.register_plugin("xep_0004")  # Data Forms
-            self.client.register_plugin("xep_0030")  # Service discovery
             self.client.register_plugin("xep_0060")  # PubSub
             self.client.register_plugin("xep_0066")  # Out of Band Data
             self.client.register_plugin("xep_0054")  # vcard-temp
@@ -253,6 +293,20 @@ class XMPPAdapter(BasePlatformAdapter):
         if self.avatar_path:
             logger.info("XMPP: publishing avatar from %s", self.avatar_path)
             await self._publish_avatar()
+            self._schedule_avatar_republish()
+
+    def _schedule_avatar_republish(self) -> None:
+        """Schedule a one-time avatar republish in case the first attempt did not propagate."""
+        if self._avatar_republish_task and not self._avatar_republish_task.done():
+            return
+
+        async def _republish_after_delay() -> None:
+            await asyncio.sleep(60.0)
+            if self.is_connected and self.avatar_path:
+                logger.info("XMPP: republishing avatar from %s", self.avatar_path)
+                await self._publish_avatar()
+
+        self._avatar_republish_task = asyncio.create_task(_republish_after_delay())
 
     async def _keepalive_loop(self) -> None:
         while self.is_connected:
@@ -402,7 +456,6 @@ class XMPPAdapter(BasePlatformAdapter):
                 try:
                     ns_sshare = "urn:xmpp:sfs:0"
                     ns_share  = "urn:xmpp:share:1"
-                    ns_media  = "urn:xmpp:media-element:0"
                     ns_oob    = "jabber:x:oob"
 
                     sfs = ET.Element("{" + ns_sshare + "}file-sharing")
@@ -460,11 +513,9 @@ class XMPPAdapter(BasePlatformAdapter):
 
             ext_map = {"m4a": ".m4a", "mp4": ".m4a", "opus": ".opus", "ogg": ".ogg", "oga": ".oga"}
             codec_map = {"m4a": "aac", "mp4": "aac", "opus": "libopus", "ogg": "libopus", "oga": "libopus"}
-            mime_map = {"m4a": "audio/mp4", "mp4": "audio/mp4", "opus": "audio/opus", "ogg": "audio/ogg", "oga": "audio/ogg"}
 
             ext = ext_map[fmt]
             codec = codec_map[fmt]
-            mime = mime_map[fmt]
             out_path = mp3_path.with_suffix(ext)
 
             args = ["ffmpeg", "-y", "-i", str(mp3_path), "-c:a", codec, "-b:a", "24k"]
@@ -592,35 +643,21 @@ class XMPPAdapter(BasePlatformAdapter):
         try:
             parsed = urlparse(url)
             fragment = parsed.fragment
-            logger.info("XMPP: aesgcm fragment len=%s url=%r", len(fragment) if fragment else 0, url)
             if not fragment or len(fragment) != 88:
                 logger.warning("XMPP: invalid aesgcm fragment length")
                 return None
             iv = bytes.fromhex(fragment[:24])
             key = bytes.fromhex(fragment[24:])
             https_url = f"https://{parsed.netloc}{parsed.path}"
-            logger.info("XMPP: downloading aesgcm ciphertext from %s", https_url)
-            resp = await self._http.get(https_url)
-            resp.raise_for_status()
-            ciphertext = resp.content
-            logger.info("XMPP: ciphertext size %d bytes", len(ciphertext))
+            async with self._http as client:
+                resp = await client.get(https_url)
+                resp.raise_for_status()
+                ciphertext = resp.content
             aesgcm = AESGCM(key)
             plaintext = aesgcm.decrypt(iv, ciphertext, None)
-            logger.info("XMPP: plaintext size %d bytes", len(plaintext))
             return plaintext
         except Exception as exc:
             logger.warning("XMPP: failed to decrypt aesgcm %s: %s", url, exc)
-            return None
-
-    async def _download_url(self, url: str) -> Optional[bytes]:
-        try:
-            if url.startswith("aesgcm://"):
-                return await self._download_aesgcm(url)
-            resp = await self._http.get(url)
-            resp.raise_for_status()
-            return resp.content
-        except Exception as exc:
-            logger.warning("XMPP: failed to download %s: %s", url, exc)
             return None
 
     def _extract_url(self, text: str) -> Optional[str]:
@@ -654,7 +691,21 @@ class XMPPAdapter(BasePlatformAdapter):
             img.save(png_buffer, format="PNG", optimize=True)
             data = png_buffer.getvalue()
 
-            # Try PEP/XEP-0084 first (best effort, can hang on some servers).
+            # Always publish vCard avatar (XEP-0153); most clients use this.
+            vcard_avatar = self.client.plugin.get("xep_0153", None)
+            if vcard_avatar is not None:
+                try:
+                    await asyncio.wait_for(
+                        vcard_avatar.set_avatar(avatar=data, mtype="image/png"),
+                        timeout=15.0,
+                    )
+                    logger.info("XMPP: published vCard avatar (%d bytes, %dx%d)", len(data), img.width, img.height)
+                except Exception as exc:
+                    logger.warning("XMPP: vCard avatar publish failed: %s", exc)
+            else:
+                logger.warning("XMPP: xep_0153 plugin not available")
+
+            # Try PEP/XEP-0084 second (best effort, can hang on some servers).
             pep_avatar = self.client.plugin.get("xep_0084", None)
             if pep_avatar is not None:
                 try:
@@ -669,21 +720,9 @@ class XMPPAdapter(BasePlatformAdapter):
                     }), timeout=5.0)
                     logger.info("XMPP: published PEP avatar id=%s (%d bytes, %dx%d)", avatar_id[:16], len(data), img.width, img.height)
                 except Exception as exc:
-                    logger.debug("XMPP: PEP avatar publish skipped/failed: %s", exc)
-
-            # Always publish vCard avatar (XEP-0153); most clients use this.
-            vcard_avatar = self.client.plugin.get("xep_0153", None)
-            if vcard_avatar is not None:
-                try:
-                    await asyncio.wait_for(
-                        vcard_avatar.set_avatar(avatar=data, mtype="image/png"),
-                        timeout=15.0,
-                    )
-                    logger.info("XMPP: published vCard avatar (%d bytes, %dx%d)", len(data), img.width, img.height)
-                except Exception as exc:
-                    logger.debug("XMPP: vCard avatar publish did not confirm quickly: %s", exc)
+                    logger.warning("XMPP: PEP avatar publish failed: %s", exc)
             else:
-                logger.warning("XMPP: xep_0153 plugin not available")
+                logger.debug("XMPP: xep_0084 plugin not available")
         except Exception as exc:
             logger.warning("XMPP: failed to publish avatar: %s", exc, exc_info=True)
 
@@ -740,7 +779,6 @@ class XMPPAdapter(BasePlatformAdapter):
             except Exception:
                 pass
 
-            logger.info("XMPP: decrypted message body (%d chars): %r", len(body), body[:200])
             url: Optional[str] = None
             try:
                 oob = msg.xml.find(".//{jabber:x:oob}x")
@@ -750,37 +788,42 @@ class XMPPAdapter(BasePlatformAdapter):
                         url = url_el.text.strip()
             except Exception:
                 pass
-            logger.info("XMPP: OOB URL=%r", url)
             if not url:
                 url = self._extract_url(body)
-                if url:
-                    logger.info("XMPP: extracted URL from body via regex: %r", url)
+
             media_path: Optional[str] = None
             msg_type = MessageType.TEXT
             if url:
-                logger.info("XMPP: detected URL in message: %s", url)
+                logger.debug("XMPP: detected URL in message: %s", url)
                 if url.startswith("aesgcm://"):
                     data = await self._download_aesgcm(url)
                 else:
                     data = await self._download_url(url)
-                logger.info("XMPP: downloaded %d bytes from %s", len(data) if data else 0, url)
+                logger.debug("XMPP: downloaded %d bytes from %s", len(data) if data else 0, url)
                 if data:
-                    if _is_audio_url(url):
+                    if _guess_audio_is_voice(url, body):
+                        msg_type = MessageType.VOICE
+                        media_path = self._cache_media(data, "audio")
+                    elif _is_audio_url(url):
                         msg_type = MessageType.AUDIO
                         media_path = self._cache_media(data, "audio")
                     else:
                         msg_type = MessageType.PHOTO
                         media_path = self._cache_media(data, "image")
-                    if media_path:
-                        from pathlib import Path as _Path
-                        p = _Path(media_path)
-                        logger.info("XMPP: cached file exists=%s size=%s", p.exists(), p.stat().st_size if p.exists() else 0)
-                        logger.info("XMPP: plaintext magic=%s", data[:8].hex())
                 else:
                     logger.warning("XMPP: failed to download media from %s", url)
                     msg_type = MessageType.TEXT
 
-                logger.info("XMPP: cached media path=%s", media_path)
+                logger.debug("XMPP: cached media path=%s", media_path)
+
+            # If media was cached, replace the URL in the body with the local
+            # path so downstream tools analyse the actual file, not the link.
+            display_text = body
+            if media_path and url:
+                display_text = body.replace(url, media_path)
+                if display_text == body:
+                    # URL not in body (e.g. only in oob); use a direct note.
+                    display_text = f"{body}\n[Attached media: {media_path}]".strip()
 
             source = self.build_source(
                 chat_id=sender_bare,
@@ -792,7 +835,7 @@ class XMPPAdapter(BasePlatformAdapter):
             )
 
             event = MessageEvent(
-                text=body,
+                text=display_text,
                 message_type=msg_type,
                 source=source,
                 raw_message=msg,
