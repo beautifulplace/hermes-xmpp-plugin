@@ -168,15 +168,36 @@ def install_dependencies(
                     "Consider using 'tiny', 'base', or 'small' instead.",
                     file=sys.stderr,
                 )
+        print(
+            "  The model will be downloaded from Hugging Face. "
+            "For large models an HF_TOKEN is recommended for faster downloads."
+        )
+        print(f"  Download size for '{whisper_model}': see https://github.com/SYSTRAN/faster-whisper#model-size")
         try:
+            env = _python_env()
+            # If an HF_TOKEN was collected/stored, use it for the download.
+            hf_token = env.get("HF_TOKEN", "")
+            if not hf_token:
+                hf_token = os.environ.get("HF_TOKEN", "")
+            if hf_token:
+                env["HF_TOKEN"] = hf_token
+                print("  Using HF_TOKEN from environment for model download.")
+            print("  Downloading model... (progress will appear below)")
             subprocess.run(
                 [
                     str(python), "-c",
-                    f"from faster_whisper import WhisperModel; "
-                    f"WhisperModel('{whisper_model}', device='cpu', compute_type='int8')",
+                    "import os; "
+                    "import sys; "
+                    "from huggingface_hub import snapshot_download; "
+                    "from faster_whisper import WhisperModel; "
+                    "model = sys.argv[1]; "
+                    "repo = f'Systran/faster-whisper-{model}'; "
+                    "snapshot_download(repo, local_files_only=False); "
+                    "WhisperModel(model, device='cpu', compute_type='int8')",
+                    whisper_model,
                 ],
                 check=True,
-                env=_python_env(),
+                env=env,
             )
             print(f"  faster-whisper model '{whisper_model}' is ready.")
         except subprocess.CalledProcessError as exc:
@@ -189,8 +210,6 @@ def install_dependencies(
 def enable_plugin_in_config(
     config_path: Path,
     add_defaults: bool,
-    jid: str = "",
-    password: str = "",
     avatar_path: str = "",
     whisper_model: str = "",
 ) -> None:
@@ -204,7 +223,7 @@ def enable_plugin_in_config(
     config_text = enable_plugin(config_text)
     if add_defaults:
         config_text = add_default_xmpp_config(
-            config_text, jid=jid, password=password, avatar_path=avatar_path
+            config_text, avatar_path=avatar_path
         )
 
     if whisper_model:
@@ -240,12 +259,13 @@ def _ensure_stt_config(config_text: str, model: str) -> str:
 
 
 def prompt_xmpp_credentials(
-    args: argparse.Namespace, env_path: Path
-) -> tuple[str, str, str]:
-    """Return (jid, password, avatar_path), prompting for any missing values.
+    args: argparse.Namespace, env_path: Path, whisper_model: str = ""
+) -> tuple[str, str, str, str]:
+    """Return (jid, password, avatar_path, hf_token), prompting for missing values.
 
-    If the Hermes .env file already contains XMPP_USER_JID or XMPP_PASSWORD,
-    those values are shown as defaults; the user can press Enter to keep them.
+    If the Hermes .env file already contains XMPP_USER_JID, XMPP_PASSWORD, or
+    HF_TOKEN, those values are shown as defaults; the user can press Enter to
+    keep them.
     """
     defaults = _load_env_credentials(env_path)
 
@@ -288,11 +308,26 @@ def prompt_xmpp_credentials(
         )
         avatar_path = input("Avatar file path (leave blank for none): ").strip()
 
-    return jid, password, avatar_path
+    hf_token = ""
+    if whisper_model and whisper_model.startswith("large"):
+        print(
+            "\nHugging Face token (optional). Large model downloads are faster "
+            "and more reliable with an HF_TOKEN. Leave blank to skip."
+        )
+        default_hf_token = defaults.get("HF_TOKEN", "")
+        if default_hf_token:
+            prompt = "HF_TOKEN [press Enter to keep existing]: "
+        else:
+            prompt = "HF_TOKEN: "
+        hf_token = getpass.getpass(prompt)
+        if not hf_token:
+            hf_token = default_hf_token
+
+    return jid, password, avatar_path, hf_token
 
 
 def _load_env_credentials(env_path: Path) -> dict[str, str]:
-    """Load existing XMPP_* credentials from the Hermes .env file."""
+    """Load existing credentials from the Hermes .env file."""
     if not env_path.exists():
         return {}
     result: dict[str, str] = {}
@@ -302,13 +337,22 @@ def _load_env_credentials(env_path: Path) -> dict[str, str]:
             continue
         key, value = line.split("=", 1)
         key = key.strip()
-        if key in ("XMPP_USER_JID", "XMPP_PASSWORD"):
+        if key in ("XMPP_USER_JID", "XMPP_PASSWORD", "HF_TOKEN"):
             result[key] = value.strip().strip('"\'')
     return result
 
 
-def append_env_credentials(env_path: Path, jid: str, password: str) -> None:
-    """Append XMPP credentials to the Hermes .env file if not already present."""
+def append_env_credentials(
+    env_path: Path,
+    jid: str,
+    password: str,
+    hf_token: str = "",
+) -> None:
+    """Append credentials to the Hermes .env file if not already present.
+
+    Stores XMPP_JID, XMPP_PASSWORD, and optionally HF_TOKEN. Never writes
+    secrets to config.yaml.
+    """
     lines: list[str] = []
     if env_path.exists():
         text = env_path.read_text()
@@ -322,6 +366,8 @@ def append_env_credentials(env_path: Path, jid: str, password: str) -> None:
         additions.append(f'XMPP_USER_JID="{jid}"')
     if "XMPP_PASSWORD" not in existing_keys:
         additions.append(f'XMPP_PASSWORD="{password}"')
+    if hf_token and "HF_TOKEN" not in existing_keys:
+        additions.append(f'HF_TOKEN="{hf_token}"')
 
     if not additions:
         return
@@ -330,7 +376,7 @@ def append_env_credentials(env_path: Path, jid: str, password: str) -> None:
         env_path.write_text("\n".join(lines + additions) + "\n")
     else:
         env_path.write_text("\n".join(additions) + "\n")
-    print(f"Appended XMPP credentials to {env_path}")
+    print(f"Appended credentials to {env_path}")
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
@@ -456,6 +502,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     jid = ""
     password = ""
     avatar_path = ""
+    hf_token = ""
     if not args.no_defaults:
         if args.non_interactive:
             if not args.jid or not args.password:
@@ -463,20 +510,27 @@ def main(argv: Optional[list[str]] = None) -> int:
             jid = args.jid
             password = args.password
             avatar_path = args.avatar_path or ""
+            if args.with_whisper and args.with_whisper.startswith("large"):
+                print(
+                    "WARNING: --with-whisper large* models may need HF_TOKEN for reliable downloads. "
+                    "Set HF_TOKEN in the .env file manually, or run interactively.",
+                    file=sys.stderr,
+                )
         else:
-            jid, password, avatar_path = prompt_xmpp_credentials(args, env_path)
+            jid, password, avatar_path, hf_token = prompt_xmpp_credentials(
+                args, env_path, whisper_model=args.with_whisper
+            )
 
     enable_plugin_in_config(
         config_path,
         add_defaults=not args.no_defaults,
-        jid=jid,
-        password=password,
         avatar_path=avatar_path,
         whisper_model=args.with_whisper,
     )
 
     if not args.no_defaults and jid and password:
-        append_env_credentials(env_path, jid, password)
+        append_env_credentials(env_path, jid, password, hf_token=hf_token)
+        print("  XMPP credentials stored in .env (not config.yaml).")
 
     print("\nInstallation complete.")
     if args.with_whisper:
