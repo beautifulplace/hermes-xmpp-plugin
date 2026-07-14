@@ -48,9 +48,55 @@ def _parse_bool(value: Any, default: bool = False) -> bool:
     return default
 
 
+def _guess_content_type(data: bytes) -> str:
+    """Inspect file magic bytes to determine the real content type."""
+    if len(data) < 4:
+        return "unknown"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+        return "image/gif"
+    if data.startswith(b"RIFF") and len(data) >= 12 and data[8:12] == b"WEBP":
+        return "image/webp"
+    if data.startswith(b"BM"):
+        return "image/bmp"
+    if len(data) >= 12 and data[4:8] == b"ftyp":
+        return "audio/m4a"
+    if data.startswith(b"OggS"):
+        return "audio/ogg"
+    if data.startswith(b"ID3"):
+        return "audio/mp3"
+    if len(data) >= 2 and data[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"):
+        return "audio/mp3"
+    if data.startswith(b"RIFF") and len(data) >= 12 and data[8:12] == b"WAVE":
+        return "audio/wav"
+    if data.startswith(b"\x1a\x45\xdf\xa3"):
+        return "audio/webm"
+    return "unknown"
+
+
+def _guess_extension_from_data(data: bytes) -> str:
+    """Return a file extension based on actual file content."""
+    content_type = _guess_content_type(data)
+    return {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/gif": ".gif",
+        "image/webp": ".webp",
+        "image/bmp": ".bmp",
+        "audio/m4a": ".m4a",
+        "audio/ogg": ".ogg",
+        "audio/mp3": ".mp3",
+        "audio/wav": ".wav",
+        "audio/webm": ".webm",
+    }.get(content_type, "")
+
+
 def _is_audio_url(url: str) -> bool:
     return any(url.lower().endswith(ext) for ext in (
-        ".ogg", ".oga", ".mp3", ".m4a", ".webm", ".wav", ".opus", ".mp4"
+        ".ogg", ".oga", ".mp3", ".m4a", ".webm", ".wav", ".opus"
     ))
 
 
@@ -880,7 +926,19 @@ class XMPPAdapter(BasePlatformAdapter):
                     data = await self._download_url(url)
                 logger.debug("XMPP: downloaded %d bytes from %s", len(data) if data else 0, url)
                 if data:
-                    if _guess_audio_is_voice(url, body):
+                    content_type = _guess_content_type(data)
+                    if content_type.startswith("image/"):
+                        msg_type = MessageType.PHOTO
+                        ext = _guess_extension_from_data(data)
+                        media_path = self._cache_media(data, "image", ext=ext)
+                    elif content_type.startswith("audio/"):
+                        if _guess_audio_is_voice(url, body):
+                            msg_type = MessageType.VOICE
+                        else:
+                            msg_type = MessageType.AUDIO
+                        ext = _guess_audio_extension(url, data)
+                        media_path = self._cache_media(data, "audio", ext=ext)
+                    elif _guess_audio_is_voice(url, body):
                         msg_type = MessageType.VOICE
                         ext = _guess_audio_extension(url, data)
                         media_path = self._cache_media(data, "audio", ext=ext)
@@ -940,6 +998,8 @@ class XMPPAdapter(BasePlatformAdapter):
     def _cache_media(self, data: bytes, kind: str = "image", ext: Optional[str] = None) -> Optional[str]:
         try:
             if ext is None:
+                ext = ".ogg" if kind == "audio" else ".png"
+            elif not ext:
                 ext = ".ogg" if kind == "audio" else ".png"
             mime = "audio/mpeg" if kind == "audio" else "image/png"
             validate_inbound_media_size(len(data), media_type=kind)
