@@ -92,13 +92,7 @@ platforms:
     allow_all_users: false
 ```
 
-For security, store the JID and password in your Hermes `.env` file instead of `config.yaml`:
-
-```bash
-# ~/.hermes/.env
-XMPP_USER_JID="hermes@example.com"
-XMPP_PASSWORD="your-password"
-```
+For security, the installer stores the JID and password in your Hermes `.env` file instead of `config.yaml`.
 
 ### Environment variables
 
