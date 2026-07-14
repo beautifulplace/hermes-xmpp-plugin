@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import io
+import os
 import shutil
 import subprocess
 import sys
@@ -95,6 +96,15 @@ def install_dependencies(
     deps_dir = plugin_dest / "deps"
     deps_dir.mkdir(parents=True, exist_ok=True)
 
+    def _python_env() -> dict[str, str]:
+        """Return an environment that includes the plugin deps dir on PYTHONPATH."""
+        env = os.environ.copy()
+        pythonpath = [str(deps_dir)]
+        if env.get("PYTHONPATH"):
+            pythonpath.append(env["PYTHONPATH"])
+        env["PYTHONPATH"] = os.pathsep.join(dict.fromkeys(pythonpath))
+        return env
+
     to_install = []
     for pip_name, import_name, required in DEPENDENCIES:
         if only_required and not required:
@@ -141,6 +151,23 @@ def install_dependencies(
 
     if whisper_model:
         print(f"Pre-downloading faster-whisper model: {whisper_model}")
+        if whisper_model.startswith("large"):
+            total_ram_gb = 0
+            try:
+                with open("/proc/meminfo") as f:
+                    for line in f:
+                        if line.startswith("MemTotal:"):
+                            total_ram_gb = int(line.split()[1]) / (1024 * 1024)
+                            break
+            except Exception:
+                pass
+            if total_ram_gb and total_ram_gb < 8:
+                print(
+                    f"  WARNING: '{whisper_model}' needs ~3-4 GB RAM. "
+                    f"This system reports {total_ram_gb:.1f} GB total RAM. "
+                    "Consider using 'tiny', 'base', or 'small' instead.",
+                    file=sys.stderr,
+                )
         try:
             subprocess.run(
                 [
@@ -149,6 +176,7 @@ def install_dependencies(
                     f"WhisperModel('{whisper_model}', device='cpu', compute_type='int8')",
                 ],
                 check=True,
+                env=_python_env(),
             )
             print(f"  faster-whisper model '{whisper_model}' is ready.")
         except subprocess.CalledProcessError as exc:
