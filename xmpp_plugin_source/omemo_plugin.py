@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import FrozenSet, Optional
 
 from omemo.storage import JSONType, Just, Maybe, Nothing, Storage
-from slixmpp_omemo import TrustLevel, XEP_0384
+from slixmpp_omemo import XEP_0384, TrustLevel
 
 logger = logging.getLogger(__name__)
 
