@@ -41,12 +41,8 @@ DEPENDENCIES: list[tuple[str, str, bool]] = [
     ("httpx", "httpx", True),
     ("Pillow", "PIL", True),
     ("cryptography", "cryptography", True),
-    ("slixmpp-omemo", "slixmpp_omemo", False),
+    ("slixmpp-omemo", "slixmpp_omemo", True),
 ]
-
-# NOTE: STT/TTS are handled by Hermes core. Do not add faster-whisper, edge-tts,
-# or MeloTTS here. Configure them in config.yaml under stt: and tts:.
-
 
 def fail(message: str) -> NoReturn:
     print(f"ERROR: {message}", file=sys.stderr)
@@ -77,7 +73,6 @@ def copy_plugin(plugin_src: Path, plugin_dest: Path, force: bool) -> None:
 def install_dependencies(
     python: Path,
     plugin_dest: Path,
-    only_required: bool,
 ) -> None:
     """Ensure plugin dependencies are importable by the gateway.
 
@@ -100,8 +95,6 @@ def install_dependencies(
 
     to_install = []
     for pip_name, import_name, required in DEPENDENCIES:
-        if only_required and not required:
-            continue
         try:
             subprocess.run(
                 [str(python), "-c", f"import {import_name}"],
@@ -324,11 +317,6 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Python interpreter to use for dependency installs (default: Hermes venv python)",
     )
     parser.add_argument(
-        "--only-required-deps",
-        action="store_true",
-        help="Install only required dependencies; skip optional ones (e.g. OMEMO)",
-    )
-    parser.add_argument(
         "--no-defaults",
         action="store_true",
         help="Do not add a default platforms.xmpp block to config.yaml",
@@ -410,7 +398,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     install_dependencies(
         python,
         plugin_dest,
-        only_required=args.only_required_deps,
     )
 
     if config_path.exists():
