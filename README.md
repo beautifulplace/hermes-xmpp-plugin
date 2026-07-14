@@ -41,6 +41,30 @@ Then restart the Hermes gateway:
 hermes gateway restart
 ```
 
+### Optional: enable high-quality local TTS for voice replies
+
+By default, outgoing voice replies use `edge-tts` (cloud voices from Microsoft Edge). For a local, higher-quality alternative, install [MeloTTS](https://github.com/myshell-ai/MeloTTS):
+
+```bash
+python3 install_xmpp_plugin.py --with-melotts
+```
+
+The installer will:
+
+- Install `MeloTTS` into the plugin `deps/` directory
+- Pre-download the English model
+- Set `voice_tts: melo` and `voice_model: EN-Default` in `config.yaml`
+
+You can also combine faster-whisper and MeloTTS:
+
+```bash
+python3 install_xmpp_plugin.py --with-whisper base --with-melotts
+```
+
+MeloTTS speaker choices include: `EN-Default`, `EN-US`, `EN-BR`, `EN-AU`, `EN-IN`. Change `voice_model` in `config.yaml` or pass `--voice-model` at install time.
+
+Note: the first model download is from Hugging Face. For faster downloads, provide an HF_TOKEN when prompted.
+
 ### Optional: disable OMEMO encryption
 
 OMEMO is enabled by default. To install the plugin without the OMEMO dependency, pass `--only-required-deps`:
@@ -124,14 +148,15 @@ platforms:
     omemo_allow_untrusted: true
     typing_indicator: true
     voice_reply: false
-    voice_model: en-GB-SoniaNeural
+    voice_tts: edge
+    voice_model: EN-Default
     voice_format: m4a
     avatar_path: "/path/to/avatar.png"
     home_channel: ""
     allow_all_users: false
 ```
 
-For security, store the password in your Hermes `.env` file instead:
+For security, store the JID and password in your Hermes `.env` file instead of `config.yaml`:
 
 ```bash
 # ~/.hermes/.env
