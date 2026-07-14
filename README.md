@@ -114,10 +114,10 @@ For a Raspberry Pi 4 with 8 GB RAM, `tiny` is recommended. Larger models are slo
 | tiny | 39M | ~75 MB | ~300 MB | Raspberry Pi 4, low-power devices |
 | base | 74M | ~150 MB | ~500 MB | Raspberry Pi 4, entry-level CPUs |
 | small | 244M | ~500 MB | ~1 GB | Modern ARM boards, desktops |
-| medium | 769M | ~1.5 GB | ~2.5 GB | Desktop/laptop CPU |
-| large-v1 | 1.55B | ~3 GB | ~3–4 GB | Desktop CPU with 8 GB+ RAM, or 4 GB+ VRAM GPU |
-| large-v2 | 1.55B | ~3 GB | ~3–4 GB | Desktop CPU with 8 GB+ RAM, or 4 GB+ VRAM GPU |
-| large-v3 | 1.55B | ~3 GB | ~3–4 GB | Desktop CPU with 8 GB+ RAM, or 4 GB+ VRAM GPU |
+| medium | 769M | ~1.5 GB | ~2.5 GB | Desktop/laptop CPU (practical CPU limit) |
+| large-v1 | 1.55B | ~3 GB | ~3–4 GB | Desktop CPU with 8 GB+ RAM, or 4 GB+ VRAM GPU. Very slow on CPU; use medium or smaller for CPU-only real-time. |
+| large-v2 | 1.55B | ~3 GB | ~3–4 GB | Desktop CPU with 8 GB+ RAM, or 4 GB+ VRAM GPU. Very slow on CPU; use medium or smaller for CPU-only real-time. |
+| large-v3 | 1.55B | ~3 GB | ~3–4 GB | Desktop CPU with 8 GB+ RAM, or 4 GB+ VRAM GPU. Very slow on CPU; use medium or smaller for CPU-only real-time. |
 
 The large models may load on an 8 GB Raspberry Pi with int8 quantization, but transcription will be very slow and may run out of memory if other services are active.
 
