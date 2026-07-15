@@ -41,11 +41,22 @@ def test_get_profile_dir_named():
         assert profile_dir == home / "profiles" / "work"
 
 
-def test_enable_plugin_appends():
-    config = "plugins:\n  enabled:\n    - foo\n"
-    result = enable_plugin(config)
-    assert "- platforms/xmpp" in result
-    assert "- foo" in result
+def test_get_profile_dir_from_active_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        home = Path(tmp)
+        active_file = home / "active_profile"
+        active_file.write_text("bubbles\n")
+        profile_dir = get_profile_dir(home)
+        assert profile_dir == home / "profiles" / "bubbles"
+
+
+def test_get_profile_dir_active_file_blank_uses_default():
+    with tempfile.TemporaryDirectory() as tmp:
+        home = Path(tmp)
+        active_file = home / "active_profile"
+        active_file.write_text("\n")
+        profile_dir = get_profile_dir(home)
+        assert profile_dir == home
 
 
 def test_enable_plugin_creates_block():

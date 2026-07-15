@@ -56,7 +56,7 @@ def get_profile_dir(hermes_home: Path, profile: Optional[str] = None) -> Path:
     """Return the active profile directory.
 
     If a profile name is provided, use it. Otherwise check $HERMES_PROFILE,
-    then look for a sticky default in profiles/active_profile. Fall back to
+    then look for a sticky default in ~/.hermes/active_profile. Fall back to
     the base hermes_home.
     """
     if profile:
@@ -66,7 +66,7 @@ def get_profile_dir(hermes_home: Path, profile: Optional[str] = None) -> Path:
     if env_profile:
         return hermes_home / "profiles" / env_profile
 
-    active_file = hermes_home / "profiles" / "active_profile"
+    active_file = hermes_home / "active_profile"
     if active_file.exists():
         active_profile = active_file.read_text().strip()
         if active_profile:
