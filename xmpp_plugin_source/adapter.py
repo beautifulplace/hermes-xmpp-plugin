@@ -225,6 +225,7 @@ class XMPPAdapter(BasePlatformAdapter):
         self._http = httpx.AsyncClient(timeout=300.0, follow_redirects=True)
         self._keepalive_task: Optional[asyncio.Task] = None
         self._avatar_republish_task: Optional[asyncio.Task] = None
+        self._internal_reconnect_task: Optional[asyncio.Task] = None
         self._last_activity: float = 0.0
         self._ping_interval = 30.0
         self._ping_timeout = 10.0
@@ -414,21 +415,62 @@ class XMPPAdapter(BasePlatformAdapter):
             except Exception as exc:
                 logger.warning("XMPP: keepalive ping failed: %s", exc)
                 if self.is_connected:
-                    self._set_fatal_error("ping_failed", str(exc), retryable=True)
+                    self._schedule_internal_reconnect("ping_failed", str(exc))
                 break
+
+    def _schedule_internal_reconnect(self, code: str, message: str) -> None:
+        """Schedule an internal reconnect attempt before escalating to the gateway.
+
+        This handles transient TCP/XMPP stream drops without requiring the
+        gateway-level reconnect watcher to wake up.
+        """
+        if self._internal_reconnect_task and not self._internal_reconnect_task.done():
+            return
+
+        async def _reconnect_attempts() -> None:
+            delay = 5.0
+            for attempt in range(1, 4):
+                if not self.is_connected:
+                    logger.info(
+                        "XMPP: internal reconnect attempt %d/3 after %s in %.0fs",
+                        attempt, code, delay,
+                    )
+                    await asyncio.sleep(delay)
+                    if self.is_connected:
+                        logger.info("XMPP: connection already restored, aborting internal reconnect")
+                        return
+                    try:
+                        success = await self.connect(is_reconnect=True)
+                        if success:
+                            logger.info("XMPP: internal reconnect succeeded on attempt %d", attempt)
+                            return
+                    except Exception as exc:
+                        logger.warning("XMPP: internal reconnect attempt %d failed: %s", attempt, exc)
+                    delay = min(delay * 2, 60.0)
+                else:
+                    return
+            logger.error(
+                "XMPP: internal reconnect exhausted after %s (%s); escalating to gateway retry",
+                code, message,
+            )
+            self._set_fatal_error(code, message, retryable=True)
+
+        self._internal_reconnect_task = asyncio.create_task(_reconnect_attempts())
 
     async def _on_disconnected(self, event):
         logger.warning("XMPP: disconnected event received")
         if self.is_connected:
-            self._set_fatal_error("disconnected", "XMPP stream disconnected", retryable=True)
+            self._schedule_internal_reconnect("disconnected", "XMPP stream disconnected")
 
     async def disconnect(self) -> None:
-        if self._keepalive_task and not self._keepalive_task.done():
-            self._keepalive_task.cancel()
-            try:
-                await self._keepalive_task
-            except asyncio.CancelledError:
-                pass
+        for task_name in ("_keepalive_task", "_avatar_republish_task", "_internal_reconnect_task"):
+            task = getattr(self, task_name, None)
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
         self._mark_disconnected()
         if self.client:
             try:
@@ -438,7 +480,7 @@ class XMPPAdapter(BasePlatformAdapter):
             self.client = None
         await self._http.aclose()
 
-    # -- Sending -------------------------------------------------------------
+    # -- Sending ---------------------------------------------------------------
 
     async def send(
         self,
