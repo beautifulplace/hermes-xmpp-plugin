@@ -368,7 +368,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
 
     try:
-        python = get_hermes_python(profile_dir, args.python)
+        python = get_hermes_python(
+            profile_dir,
+            args.python,
+            fallback_home=get_hermes_home(None),
+        )
     except FileNotFoundError as exc:
         fail(str(exc))
 

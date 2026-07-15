@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -75,14 +76,19 @@ def get_profile_dir(hermes_home: Path, profile: Optional[str] = None) -> Path:
     return hermes_home
 
 
-def get_hermes_python(hermes_home: Path, cli_python: Optional[str] = None) -> Path:
+def get_hermes_python(
+    hermes_home: Path,
+    cli_python: Optional[str] = None,
+    fallback_home: Optional[Path] = None,
+) -> Path:
     """Find a suitable Python interpreter.
 
     Priority:
     1. CLI --python argument
-    2. Hermes venv python: <home>/hermes-agent/venv/bin/python
-    3. Hermes source venv: <home>/hermes-agent/.venv/bin/python
-    4. Current interpreter
+    2. Profile-local Hermes venv: <home>/hermes-agent/venv/bin/python
+    3. Profile-local source venv: <home>/hermes-agent/.venv/bin/python
+    4. Base/default Hermes venv: <fallback_home>/hermes-agent/venv/bin/python
+    5. Current interpreter
     """
     if cli_python:
         python = Path(cli_python).expanduser().resolve()
@@ -95,11 +101,17 @@ def get_hermes_python(hermes_home: Path, cli_python: Optional[str] = None) -> Pa
         hermes_home / "hermes-agent" / ".venv" / "bin" / "python",
         Path.home() / ".local" / "share" / "hermes" / "venv" / "bin" / "python",
     ]
+    if fallback_home and fallback_home != hermes_home:
+        candidates.extend([
+            fallback_home / "hermes-agent" / "venv" / "bin" / "python",
+            fallback_home / "hermes-agent" / ".venv" / "bin" / "python",
+        ])
+
     for candidate in candidates:
         if candidate.exists():
             return candidate.resolve()
 
-    return Path(Path(os.__file__).parent).parent / "bin" / "python"
+    return Path(sys.executable)
 
 
 def backup_file(path: Path, suffix: str) -> Path:
