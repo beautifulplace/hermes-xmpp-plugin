@@ -12,6 +12,25 @@ plugins:
     - platforms/xmpp
 ```
 
+Or run the installer from the cloned repository:
+
+```bash
+git clone https://github.com/beautifulplace/hermes-xmpp-plugin.git
+cd hermes-xmpp-plugin
+python3 install_xmpp_plugin.py
+```
+
+The installer will copy the plugin, enable it, prompt for your XMPP JID/password, and back up your config.
+
+If you use Hermes profiles, switch to the target profile first and verify it is active:
+
+```bash
+hermes profile use my-bot
+hermes profile list
+```
+
+Then run `python3 install_xmpp_plugin.py` from the cloned repository. The installer detects the active profile from `~/.hermes/active_profile` and installs into that profile's directory (e.g. `~/.hermes/profiles/my-bot/plugins/platforms/xmpp/`).
+
 Restart the Hermes gateway after enabling it.
 
 ## Configuration

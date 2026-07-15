@@ -47,6 +47,23 @@ Restart the Hermes gateway to load the plugin:
 hermes gateway restart
 ```
 
+### Installing into a specific profile
+
+If you use Hermes profiles, first switch to the target profile and verify it is active:
+
+```bash
+hermes profile use my-bot
+hermes profile list
+```
+
+Then run the installer from inside the cloned repository:
+
+```bash
+python3 install_xmpp_plugin.py
+```
+
+The installer detects the active profile from `~/.hermes/active_profile` and installs the plugin into that profile's directory (e.g. `~/.hermes/profiles/my-bot/plugins/platforms/xmpp/`).
+
 ### Non-interactive installation
 
 For CI or headless setups, pass `--non-interactive` with `--jid` and `--password`:
