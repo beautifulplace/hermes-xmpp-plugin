@@ -31,13 +31,6 @@ hermes profile list
 
 Then run `python3 install_xmpp_plugin.py` from the cloned repository. The installer detects the active profile from `~/.hermes/active_profile` and installs into that profile's directory (e.g. `~/.hermes/profiles/my-bot/plugins/platforms/xmpp/`).
 
-If your profile has a wrapper alias in `~/.local/bin/` (created automatically by `hermes profile create`), you can also use the profile name directly:
-
-```bash
-my-bot chat
-my-bot tools list
-```
-
 Restart the Hermes gateway after enabling it.
 
 ## Configuration
