@@ -49,7 +49,7 @@ hermes gateway restart
 
 ### Installing into a specific profile
 
-If you use Hermes profiles, first switch to the target profile and verify it is active:
+If you use Hermes profiles, switch to the target profile and verify it is active:
 
 ```bash
 hermes profile use my-bot
@@ -63,6 +63,13 @@ python3 install_xmpp_plugin.py
 ```
 
 The installer detects the active profile from `~/.hermes/active_profile` and installs the plugin into that profile's directory (e.g. `~/.hermes/profiles/my-bot/plugins/platforms/xmpp/`).
+
+If your profile has a wrapper alias in `~/.local/bin/` (created automatically by `hermes profile create`), you can also use the profile name directly:
+
+```bash
+my-bot tools list
+my-bot chat
+```
 
 ### Non-interactive installation
 
