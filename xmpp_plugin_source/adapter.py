@@ -594,6 +594,7 @@ class XMPPAdapter(BasePlatformAdapter):
                 msg = self.client.make_message(mto=recipient, mtype="chat")
                 msg["body"] = chunk
                 msg["id"] = self.client.new_id()
+                msg["chat_state"] = "active"
 
                 omemo = self._omemo_plugin()
                 if omemo is not None and self.omemo_enabled:
