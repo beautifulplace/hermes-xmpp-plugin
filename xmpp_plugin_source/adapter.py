@@ -226,6 +226,7 @@ class XMPPAdapter(BasePlatformAdapter):
         self._keepalive_task: Optional[asyncio.Task] = None
         self._avatar_republish_task: Optional[asyncio.Task] = None
         self._internal_reconnect_task: Optional[asyncio.Task] = None
+        self._xmpp_background_tasks: set[asyncio.Task] = set()
         self._last_activity: float = 0.0
         self._ping_interval = 30.0
         self._ping_timeout = 10.0
@@ -284,6 +285,13 @@ class XMPPAdapter(BasePlatformAdapter):
                 "missing_credentials", "XMPP user_jid/password missing", retryable=False
             )
             return False
+
+        # If this is a reconnect, tear down the old client and tasks first so
+        # we don't end up with two slixmpp event loops racing or the old one
+        # silently swallowing events while the new one claims to be connected.
+        if is_reconnect:
+            logger.info("XMPP: tearing down old client before reconnect")
+            await self._cleanup_client()
 
         self._session_started_event.clear()
         self._omemo_ready_event.clear()
@@ -344,7 +352,11 @@ class XMPPAdapter(BasePlatformAdapter):
 
             # slixmpp connect() returns a Future that completes when the
             # connection *ends*; do not await it. Wait for session_start instead.
-            self.client.connect(host=self.server or None, port=self.port)
+            connect_future = self.client.connect(host=self.server or None, port=self.port)
+            if connect_future is not None:
+                self._xmpp_background_tasks.add(
+                    asyncio.create_task(self._watch_client_future(connect_future))
+                )
 
             try:
                 await asyncio.wait_for(
@@ -368,6 +380,18 @@ class XMPPAdapter(BasePlatformAdapter):
             logger.error("XMPP: failed to connect as %s — %s", self.user_jid, e)
             self._set_fatal_error("connect_failed", str(e), retryable=True)
             return False
+
+    async def _watch_client_future(self, future) -> None:
+        """Wait for slixmpp's connection future and trigger reconnect if it exits."""
+        try:
+            await future
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            logger.warning("XMPP: client future ended with error: %s", exc)
+        if self.is_connected:
+            logger.warning("XMPP: client future ended while still marked connected")
+            self._schedule_internal_reconnect("client_future_done", "slixmpp connection future ended")
 
     async def _finish_setup(self):
         if self.omemo_enabled:
@@ -430,25 +454,25 @@ class XMPPAdapter(BasePlatformAdapter):
         async def _reconnect_attempts() -> None:
             delay = 5.0
             for attempt in range(1, 4):
-                if not self.is_connected:
-                    logger.info(
-                        "XMPP: internal reconnect attempt %d/3 after %s in %.0fs",
-                        attempt, code, delay,
-                    )
-                    await asyncio.sleep(delay)
-                    if self.is_connected:
-                        logger.info("XMPP: connection already restored, aborting internal reconnect")
-                        return
-                    try:
-                        success = await self.connect(is_reconnect=True)
-                        if success:
-                            logger.info("XMPP: internal reconnect succeeded on attempt %d", attempt)
-                            return
-                    except Exception as exc:
-                        logger.warning("XMPP: internal reconnect attempt %d failed: %s", attempt, exc)
-                    delay = min(delay * 2, 60.0)
-                else:
+                if self.is_connected:
+                    logger.info("XMPP: connection already restored, aborting internal reconnect")
                     return
+                logger.info(
+                    "XMPP: internal reconnect attempt %d/3 after %s in %.0fs",
+                    attempt, code, delay,
+                )
+                await asyncio.sleep(delay)
+                if self.is_connected:
+                    logger.info("XMPP: connection restored while waiting, aborting internal reconnect")
+                    return
+                try:
+                    success = await self.connect(is_reconnect=True)
+                    if success:
+                        logger.info("XMPP: internal reconnect succeeded on attempt %d", attempt)
+                        return
+                except Exception as exc:
+                    logger.warning("XMPP: internal reconnect attempt %d failed: %s", attempt, exc)
+                delay = min(delay * 2, 60.0)
             logger.error(
                 "XMPP: internal reconnect exhausted after %s (%s); escalating to gateway retry",
                 code, message,
@@ -463,6 +487,12 @@ class XMPPAdapter(BasePlatformAdapter):
             self._schedule_internal_reconnect("disconnected", "XMPP stream disconnected")
 
     async def disconnect(self) -> None:
+        await self._cleanup_client()
+        self._mark_disconnected()
+        await self._http.aclose()
+
+    async def _cleanup_client(self) -> None:
+        """Cancel background tasks and disconnect the current slixmpp client."""
         for task_name in ("_keepalive_task", "_avatar_republish_task", "_internal_reconnect_task"):
             task = getattr(self, task_name, None)
             if task and not task.done():
@@ -471,14 +501,22 @@ class XMPPAdapter(BasePlatformAdapter):
                     await task
                 except asyncio.CancelledError:
                     pass
-        self._mark_disconnected()
+        # Cancel any slixmpp connection-future watchers.
+        for task in list(self._xmpp_background_tasks):
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                self._xmpp_background_tasks.discard(task)
         if self.client:
+            old_client = self.client
+            self.client = None
             try:
-                await self.client.disconnect()
+                await old_client.disconnect()
             except Exception:
                 pass
-            self.client = None
-        await self._http.aclose()
 
     # -- Sending ---------------------------------------------------------------
 
