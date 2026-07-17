@@ -704,6 +704,88 @@ class XMPPAdapter(BasePlatformAdapter):
         logger.info("XMPP: voice message sent to %s", recipient.bare)
         return SendResult(success=True)
 
+    async def send_image_file(
+        self,
+        chat_id: str,
+        image_path: str,
+        caption: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> SendResult:
+        """Send an image file over XMPP using HTTP File Upload.
+
+        Reuses the same encrypted upload and OMEMO media-sharing metadata as
+        send_voice, but sends an image file suitable for inline display.
+        """
+        try:
+            recipient = JID(chat_id)
+        except Exception as exc:
+            logger.error("XMPP: invalid recipient JID %s: %s", chat_id, exc)
+            return SendResult(success=False, error="invalid recipient jid")
+
+        image_path_obj = Path(image_path)
+        if not image_path_obj.exists():
+            return SendResult(success=False, error=f"image file not found: {image_path}")
+
+        image_bytes = image_path_obj.read_bytes()
+        ext = image_path_obj.suffix.lower() or ".png"
+        content_type = _mime_from_extension(ext)
+        filename = f"image_{uuid.uuid4().hex}{ext}"
+
+        url = await self._upload_encrypted_media(image_bytes, filename, content_type)
+        if not url:
+            url = await self._upload_file(image_bytes, filename, content_type)
+        if not url:
+            return SendResult(success=False, error="HTTP file upload failed")
+
+        msg = self.client.make_message(mto=recipient, mtype="chat")
+        msg["body"] = caption if caption else url
+        msg["id"] = self.client.new_id()
+
+        if url.startswith("aesgcm://"):
+            try:
+                ns_sshare = "urn:xmpp:sfs:0"
+                ns_share = "urn:xmpp:share:1"
+                ns_oob = "jabber:x:oob"
+
+                sfs = ET.Element("{" + ns_sshare + "}file-sharing")
+                file_el = ET.SubElement(sfs, "{" + ns_share + "}file")
+                ET.SubElement(file_el, "{" + ns_share + "}name").text = filename
+                ET.SubElement(file_el, "{" + ns_share + "}media-type").text = content_type
+                ET.SubElement(file_el, "{" + ns_share + "}size").text = str(len(image_bytes))
+
+                sources = ET.SubElement(sfs, "{" + ns_sshare + "}sources")
+                ref = ET.SubElement(sources, "{" + ns_sshare + "}reference")
+                ref.set("type", "http")
+                ref.set("url", url)
+
+                data_el = ET.SubElement(sfs, "{" + ns_oob + "}data")
+                data_el.set("url", url)
+
+                msg.xml.append(sfs)
+            except Exception as exc:
+                logger.debug("XMPP: could not attach media-sharing metadata: %s", exc)
+
+        omemo = self._omemo_plugin()
+        if omemo is not None and self.omemo_enabled:
+            try:
+                encrypted, _errors = await omemo.encrypt_message(
+                    msg,
+                    recipient_jids={recipient},
+                    identifier=str(recipient),
+                )
+                if encrypted:
+                    encrypted.send()
+                    logger.info("XMPP: OMEMO image sent to %s", recipient.bare)
+                    return SendResult(success=True)
+            except Exception as exc:
+                logger.warning("XMPP: OMEMO image send failed (%s); falling back", exc)
+
+        msg.send()
+        logger.info("XMPP: image sent to %s", recipient.bare)
+        return SendResult(success=True)
+
 
 
     async def _upload_encrypted_media(self, plaintext: bytes, filename: str, content_type: str) -> Optional[str]:
