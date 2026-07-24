@@ -214,9 +214,9 @@ class XMPPAdapter(BasePlatformAdapter):
         self.omemo_storage_path: Optional[Path] = None
         self._omemo_ready_event = asyncio.Event()
 
-        self.typing_indicator = _parse_bool(
-            os.getenv("XMPP_TYPING_INDICATOR") or extra.get("typing_indicator"), True
-        )
+        # Typing indicators are a core part of the XMPP chat UX and are always
+        # enabled. They are not configurable.
+        self.typing_indicator = True
         self.avatar_path = os.getenv("XMPP_AVATAR_PATH") or extra.get("avatar_path", "")
         self.home_channel = os.getenv("XMPP_HOME_CHANNEL") or extra.get("home_channel", "")
 
@@ -571,20 +571,6 @@ class XMPPAdapter(BasePlatformAdapter):
             except Exception as exc:
                 logger.warning("XMPP: TTS voice reply failed (%s); sending text only", exc)
         return await self._send_text(recipient, text)
-
-    async def edit_message(
-        self,
-        chat_id: str,
-        message_id: str,
-        content: str,
-        *,
-        finalize: bool = False,
-    ) -> SendResult:
-        """XMPP does not support message editing. Returning failure lets the gateway
-        fall back to sending each tool-progress line as a new message instead of
-        dropping progress entirely.
-        """
-        return SendResult(success=False, error="not supported")
 
     async def _send_voice_reply_text(self, recipient: JID, text: str) -> SendResult:
         """Generate TTS audio for the first chunk of text and send as a voice message.
@@ -1406,7 +1392,6 @@ _XMPP_YAML_KEYS = (
     "port",
     "omemo_enabled",
     "omemo_allow_untrusted",
-    "typing_indicator",
     "avatar_path",
     "home_channel",
     "allowed_users",
