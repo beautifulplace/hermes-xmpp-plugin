@@ -36,13 +36,12 @@ Restart the Hermes gateway after enabling it.
 ## Configuration
 
 The installer writes a default `platforms.xmpp` block in `config.yaml`:
-
 ```yaml
 platforms:
   xmpp:
     enabled: true
     omemo_enabled: true
-    typing_indicator: true
+    omemo_allow_untrusted: true
     avatar_path: "/path/to/avatar.png"
     home_channel: ""
     allow_all_users: false
@@ -179,4 +178,4 @@ No extra configuration is required.
 
 ## Typing Indicator
 
-The adapter supports XEP-0085 Chat State Notifications. While the agent is generating a response, your XMPP client should show a "typing" / "composing" state. The indicator disappears when the response is sent. It is enabled by default via `typing_indicator: true`.
+The adapter supports XEP-0085 Chat State Notifications. While the agent is generating a response, your XMPP client should show a "typing" / "composing" state. The indicator disappears when the response is sent. This is always enabled.
