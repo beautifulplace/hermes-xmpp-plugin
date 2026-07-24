@@ -214,9 +214,9 @@ class XMPPAdapter(BasePlatformAdapter):
         self.omemo_storage_path: Optional[Path] = None
         self._omemo_ready_event = asyncio.Event()
 
-        self.typing_indicator = _parse_bool(
-            os.getenv("XMPP_TYPING_INDICATOR") or extra.get("typing_indicator"), True
-        )
+        # Typing indicators are a core part of the XMPP chat UX and are always
+        # enabled. They are not configurable.
+        self.typing_indicator = True
         self.avatar_path = os.getenv("XMPP_AVATAR_PATH") or extra.get("avatar_path", "")
         self.home_channel = os.getenv("XMPP_HOME_CHANNEL") or extra.get("home_channel", "")
 
@@ -1392,7 +1392,6 @@ _XMPP_YAML_KEYS = (
     "port",
     "omemo_enabled",
     "omemo_allow_untrusted",
-    "typing_indicator",
     "avatar_path",
     "home_channel",
     "allowed_users",

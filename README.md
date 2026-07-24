@@ -97,7 +97,6 @@ platforms:
     enabled: true
     omemo_enabled: true
     omemo_allow_untrusted: true
-    typing_indicator: true
     avatar_path: "/path/to/avatar.png"
     home_channel: ""
     allow_all_users: false
