@@ -256,7 +256,6 @@ def add_default_xmpp_config(config_text: str, avatar_path: str = "") -> str:
     enabled: true
     omemo_enabled: true
     omemo_allow_untrusted: true
-    typing_indicator: true
     avatar_path: "{avatar_path}"
     home_channel: ""
     allow_all_users: false
@@ -274,7 +273,6 @@ def add_default_xmpp_config(config_text: str, avatar_path: str = "") -> str:
     enabled: true
     omemo_enabled: true
     omemo_allow_untrusted: true
-    typing_indicator: true
     avatar_path: "{avatar_path}"
     home_channel: ""
     allow_all_users: false
