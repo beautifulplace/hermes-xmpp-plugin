@@ -992,6 +992,7 @@ class XMPPAdapter(BasePlatformAdapter):
             if msg["type"] not in ("chat", "normal"):
                 return
 
+            logger.info("XMPP: _on_message fired type=%s from=%s", msg.get("type", ""), msg["from"])
             sender_jid = msg["from"]
             if not sender_jid:
                 return
