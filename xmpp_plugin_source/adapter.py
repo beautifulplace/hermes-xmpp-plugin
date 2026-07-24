@@ -201,6 +201,10 @@ class XMPPAdapter(BasePlatformAdapter):
             except (ValueError, TypeError):
                 self.port = 5222
 
+        self.verify_tls = _parse_bool(
+            os.getenv("XMPP_VERIFY_TLS") or extra.get("verify_tls"), True
+        )
+
         self.omemo_enabled = _parse_bool(
             os.getenv("XMPP_OMEMO_ENABLED") or extra.get("omemo_enabled"), False
         )
@@ -303,7 +307,17 @@ class XMPPAdapter(BasePlatformAdapter):
             jid_str = self.user_jid
             if "/" not in jid_str:
                 jid_str = f"{jid_str}/Hermes"
-            self.client = ClientXMPP(jid_str, self.password)
+
+            ssl_context = None
+            if not self.verify_tls:
+                import ssl
+
+                ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_NONE
+                logger.info("XMPP: TLS certificate verification disabled for %s", self.user_jid)
+
+            self.client = ClientXMPP(jid_str, self.password, ssl_context=ssl_context)
             self.client.use_message_ids = True
             self.client.register_plugin("xep_0030")  # Service discovery
             try:
