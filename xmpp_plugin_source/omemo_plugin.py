@@ -73,7 +73,7 @@ class HermesOMEMO(XEP_0384):
         scope of this adapter.
     """
 
-    name = "hermes_omemo"
+    name = "xep_0384"
     description = "Hermes OMEMO Encryption"
 
     def __init__(self, xmpp, config: dict):
