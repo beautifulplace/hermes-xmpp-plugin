@@ -1001,8 +1001,16 @@ class XMPPAdapter(BasePlatformAdapter):
             body = msg.get("body", "").strip()
             encrypted = False
 
+            # Only attempt OMEMO decryption if the stanza actually contains an
+            # OMEMO <encrypted> payload. If OMEMO is enabled but the message is
+            # plaintext, slixmpp-omemo raises "No supported encrypted content";
+            # in that case we keep the plaintext body.
             omemo = self._omemo_plugin()
-            if omemo is not None and self.omemo_enabled:
+            has_encrypted = (
+                msg.xml.find(".//{eu.siacs.conversations.axolotl}encrypted") is not None
+                or msg.xml.find(".//{urn:xmpp:omemo:2}encrypted") is not None
+            )
+            if omemo is not None and self.omemo_enabled and has_encrypted:
                 try:
                     decrypted, _device_info = await omemo.decrypt_message(msg)
                     body_text = str(decrypted.get("body", "") or "").strip()
@@ -1012,6 +1020,7 @@ class XMPPAdapter(BasePlatformAdapter):
                         logger.info("XMPP: OMEMO decrypted message from %s: %s chars", sender_bare, len(body))
                 except Exception as exc:
                     logger.warning("XMPP: OMEMO decrypt attempt failed: %s", exc, exc_info=True)
+                    # Fall back to plaintext body if decryption fails.
 
             if not body:
                 return
