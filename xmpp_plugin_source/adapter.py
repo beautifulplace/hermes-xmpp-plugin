@@ -623,7 +623,10 @@ class XMPPAdapter(BasePlatformAdapter):
                 msg = self.client.make_message(mto=recipient, mtype="chat")
                 msg["body"] = chunk
                 msg["id"] = self.client.new_id()
-                msg["chat_state"] = "active"
+                # Chat states are advisory; some clients (Gajim) do not reliably
+                # extract an <active/> tag from inside an OMEMO-encrypted
+                # payload, so we follow up with a standalone unencrypted
+                # <active/> stanza after all chunks below.
 
                 omemo = self._omemo_plugin()
                 if omemo is not None and self.omemo_enabled:
@@ -678,6 +681,10 @@ class XMPPAdapter(BasePlatformAdapter):
                 if i < len(chunks) - 1:
                     await asyncio.sleep(0.2)
 
+            # Send a final standalone <active/> chat-state notification.
+            # This clears any lingering composing indicator in clients that do
+            # not observe the encrypted chat-state in the message(s) above.
+            await self.stop_typing(str(recipient.bare))
             return SendResult(success=True)
         except Exception as exc:
             logger.exception("XMPP: failed to send message to %s: %s", recipient.bare, exc)
@@ -757,12 +764,15 @@ class XMPPAdapter(BasePlatformAdapter):
                 if encrypted:
                     encrypted.send()
                     logger.info("XMPP: OMEMO voice message sent to %s", recipient.bare)
+                    # Clear composing indicator after delivering the voice message.
+                    await self.stop_typing(str(recipient.bare))
                     return SendResult(success=True)
             except Exception as exc:
                 logger.warning("XMPP: OMEMO voice send failed (%s); falling back", exc)
 
         msg.send()
         logger.info("XMPP: voice message sent to %s", recipient.bare)
+        await self.stop_typing(str(recipient.bare))
         return SendResult(success=True)
 
     async def send_image_file(
@@ -839,12 +849,14 @@ class XMPPAdapter(BasePlatformAdapter):
                 if encrypted:
                     encrypted.send()
                     logger.info("XMPP: OMEMO image sent to %s", recipient.bare)
+                    await self.stop_typing(str(recipient.bare))
                     return SendResult(success=True)
             except Exception as exc:
                 logger.warning("XMPP: OMEMO image send failed (%s); falling back", exc)
 
         msg.send()
         logger.info("XMPP: image sent to %s", recipient.bare)
+        await self.stop_typing(str(recipient.bare))
         return SendResult(success=True)
 
 
