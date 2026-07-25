@@ -16,14 +16,9 @@ XMPP gateway adapter for [Hermes Agent](https://github.com/NousResearch/hermes-a
 ## Requirements
 
 - Python 3.10+
-: [https://github.com/NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) gateway
+- A running [Hermes Agent](https://github.com/NousResearch/hermes-agent) gateway installation
 - An XMPP account for the bot
-  ```bash
-  # Debian/Ubuntu/Raspberry Pi OS
-  # Fedora/RHEL
-  # Arch Linux
-  # macOS
-  ```
+
 ## Installation
 
 Clone the repository:
