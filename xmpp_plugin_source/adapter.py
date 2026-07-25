@@ -122,7 +122,7 @@ class XMPPAdapter(BasePlatformAdapter):
         self._xmpp_background_tasks: set[asyncio.Task] = set()
         self._last_activity: float = 0.0
         self._ping_interval = 30.0
-        self._ping_timeout = 10.0
+        self._ping_timeout = 30.0
 
         self._voice_reply_chats: set[str] = set()
         self._last_resources: Dict[str, str] = {}
