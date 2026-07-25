@@ -161,15 +161,24 @@ def is_voice_url(url: str, body: str = "") -> bool:
     lowered = url.lower()
     if not lowered:
         return False
-    if url.startswith("aesgcm://"):
+
+    # Explicit audio file extensions are a strong signal.
+    if any(lowered.endswith(ext) for ext in (".m4a", ".mp4", ".ogg", ".oga", ".opus", ".mp3", ".webm", ".wav")):
         return True
     if "voice-message" in lowered:
         return True
-    if any(lowered.endswith(ext) for ext in (".ogg", ".oga", ".opus", ".webm")):
-        return True
-    stripped = body.strip()
-    if stripped == url or len(stripped) <= len(url) + 10:
-        return True
+
+    # aesgcm:// without an audio extension might be an image/file; require the
+    # message body to be audio-only (just the URL, or very short) before
+    # treating it as a voice message.
+    if url.startswith("aesgcm://"):
+        stripped = body.strip()
+        if stripped == url or len(stripped) <= len(url) + 10:
+            return True
+        return False
+
+    # Plain HTTP(S) URLs ending in known audio extensions were already handled
+    # above; any other URL is not considered voice.
     return False
 
 
