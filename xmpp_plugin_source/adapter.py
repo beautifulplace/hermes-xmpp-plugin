@@ -241,6 +241,7 @@ class XMPPAdapter(BasePlatformAdapter):
 
             self.client.add_event_handler("session_start", self._session_start)
             self.client.add_event_handler("message", self._on_message)
+            self.client.add_event_handler("presence", self._on_presence)
             self.client.add_event_handler("exception", self._slixmpp_exception_handler)
             self.client.add_event_handler("disconnected", self._on_disconnected)
 
@@ -890,6 +891,36 @@ class XMPPAdapter(BasePlatformAdapter):
         sender_bare = str(JID(msg["from"]).bare) if msg.get("from") else ""
         if sender_bare:
             await self._flush_pending_messages(sender_bare)
+
+    async def _on_presence(self, presence: Any) -> None:
+        """Cache available resources and flush pending messages as clients come online."""
+        from_ = presence.get("from")
+        if not from_:
+            return
+        try:
+            sender = JID(from_)
+        except Exception:
+            return
+        sender_bare = str(sender.bare)
+        if sender_bare == str(JID(self.user_jid).bare):
+            return
+
+        # Only track available resources.
+        show = presence.get("show", "")
+        ptype = presence.get("type", "")
+        if ptype in ("unavailable", "subscribe", "subscribed", "unsubscribe", "unsubscribed"):
+            return
+        if show in ("xa", "dnd"):
+            # Away/do-not-disturb still counts as online for delivery purposes,
+            # but don't flush repeatedly for the same resource.
+            pass
+
+        resource = str(sender)
+        if self._last_resources.get(sender_bare) == resource:
+            return
+        self._last_resources[sender_bare] = resource
+        logger.info("XMPP: presence from %s, resource cached", resource)
+        await self._flush_pending_messages(sender_bare)
 
     async def _flush_pending_messages(self, sender_bare: str) -> None:
         """Send queued messages to *sender_bare* via the resource that just became known.
