@@ -894,8 +894,13 @@ class XMPPAdapter(BasePlatformAdapter):
         if not pending:
             return
         logger.info("XMPP: flushing %d pending message(s) to %s", len(pending), sender_bare)
+        try:
+            recipient = JID(sender_bare)
+        except Exception as exc:
+            logger.warning("XMPP: cannot flush pending messages to invalid JID %s: %s", sender_bare, exc)
+            return
         for text in pending:
-            asyncio.create_task(self.send(sender_bare, text))
+            asyncio.create_task(self._send_text(recipient, text))
 
     def _build_source(self, sender_bare: str) -> Any:
         from gateway.session import SessionSource
