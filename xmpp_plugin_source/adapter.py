@@ -197,6 +197,24 @@ class XMPPAdapter(BasePlatformAdapter):
             self._set_fatal_error("missing_credentials", "XMPP credentials missing", retryable=False)
             return False
 
+        # If a previous cleanup left the client set, force a hard reset before
+        # creating a new one. This prevents slixmpp reconnection hangs when the
+        # old transport is stuck.
+        if is_reconnect and self.client is not None:
+            logger.info("XMPP: hard client reset before reconnect")
+            try:
+                self.client.disconnect()
+            except Exception:
+                pass
+            try:
+                transport = getattr(self.client, "transport", None)
+                if transport is not None and hasattr(transport, "close"):
+                    transport.close()
+            except Exception:
+                pass
+            self.client = None
+            self._active_client = None
+
         if is_reconnect:
             logger.info("XMPP: tearing down old client before reconnect")
             await self._cleanup_client()
@@ -286,7 +304,7 @@ class XMPPAdapter(BasePlatformAdapter):
             logger.warning("XMPP: client future ended with error: %s", exc)
         if self.is_connected:
             logger.warning("XMPP: client future ended while still marked connected")
-            self._schedule_internal_reconnect("client_future_done", "slixmpp connection future ended")
+            self._mark_disconnected(code="client_future_done", message="slixmpp connection future ended")
 
     async def _finish_setup(self):
         if self.omemo_enabled:
@@ -336,33 +354,19 @@ class XMPPAdapter(BasePlatformAdapter):
                 break
 
     def _schedule_internal_reconnect(self, code: str, message: str) -> None:
+        """Do not attempt an internal reconnect loop.
+
+        Internal reconnect has been observed to hang indefinitely inside
+        slixmpp client teardown, blocking /restart and forcing console reboots.
+        Mark the adapter as disconnected so the gateway or systemd can restart
+        the process cleanly instead.
+        """
         if self._shutting_down:
-            return
-        if self._internal_reconnect_task and not self._internal_reconnect_task.done():
             return
         if not self.is_connected:
             return
-
-        async def _reconnect_loop():
-            logger.info("XMPP: starting internal reconnect after %s: %s", code, message)
-            delays = [5.0, 10.0, 20.0]
-            for attempt, delay in enumerate(delays, 1):
-                await asyncio.sleep(delay)
-                if not self.is_connected:
-                    logger.info("XMPP: connection restored before reconnect attempt %d", attempt)
-                    return
-                logger.info("XMPP: internal reconnect attempt %d/%d", attempt, len(delays))
-                try:
-                    result = await self.connect(is_reconnect=True)
-                    if result:
-                        logger.info("XMPP: internal reconnect succeeded on attempt %d", attempt)
-                        return
-                except Exception as exc:
-                    logger.warning("XMPP: internal reconnect attempt %d failed: %s", attempt, exc)
-            logger.warning("XMPP: internal reconnect exhausted; escalating to gateway")
-            self._mark_disconnected(code=code, message=message)
-
-        self._internal_reconnect_task = asyncio.create_task(_reconnect_loop())
+        logger.warning("XMPP: connection lost (%s: %s); marking disconnected for gateway restart", code, message)
+        self._mark_disconnected(code=code, message=message)
 
     def _make_disconnected_handler(self, client: Any):
         """Return a disconnect handler bound to one specific slixmpp client."""
@@ -374,7 +378,7 @@ class XMPPAdapter(BasePlatformAdapter):
             if self._shutting_down:
                 return
             if self.is_connected:
-                self._schedule_internal_reconnect("disconnected", str(event))
+                self._mark_disconnected(code="disconnected", message=str(event))
         return handler
 
     async def disconnect(self) -> None:
@@ -383,6 +387,8 @@ class XMPPAdapter(BasePlatformAdapter):
         self._mark_disconnected()
 
     async def _cleanup_client(self) -> None:
+        # Cancel and detach all background tasks first so nothing keeps the
+        # stale client alive while we tear it down.
         for task in list(self._xmpp_background_tasks):
             if not task.done():
                 task.cancel()
@@ -401,28 +407,36 @@ class XMPPAdapter(BasePlatformAdapter):
         self._avatar_republish_task = None
 
         if self.client is not None:
+            stale_client = self.client
+            self.client = None
+            self._active_client = None
             try:
-                self.client.del_event_handler("session_start", self._session_start)
-                self.client.del_event_handler("message", self._on_message)
-                self.client.del_event_handler("presence", self._on_presence)
-                self.client.del_event_handler("exception", self._slixmpp_exception_handler)
+                stale_client.del_event_handler("session_start", self._session_start)
+                stale_client.del_event_handler("message", self._on_message)
+                stale_client.del_event_handler("presence", self._on_presence)
+                stale_client.del_event_handler("exception", self._slixmpp_exception_handler)
                 if hasattr(self, "_current_disconnected_handler"):
-                    self.client.del_event_handler("disconnected", self._current_disconnected_handler)
-                self.client.del_event_handler("omemo_initialized", self._omemo_initialized)
+                    stale_client.del_event_handler("disconnected", self._current_disconnected_handler)
+                stale_client.del_event_handler("omemo_initialized", self._omemo_initialized)
             except Exception as exc:
                 logger.debug("XMPP: error removing event handlers during cleanup: %s", exc)
-            # Mark this client as stale so any late events are ignored.
-            self._active_client = None
+            # Disconnect with a tight timeout; do not wait forever for slixmpp.
             try:
-                self.client.disconnect()
+                stale_client.disconnect()
             except Exception:
                 pass
             try:
-                await asyncio.wait_for(self.client.wait_until("disconnected"), timeout=5.0)
+                await asyncio.wait_for(stale_client.wait_until("disconnected"), timeout=3.0)
             except Exception:
                 pass
-            self._active_client = None
-            self.client = None
+            # slixmpp sometimes leaves the XML parser/transport half-open.
+            # Explicitly abort the transport so the reconnect can proceed.
+            try:
+                transport = getattr(stale_client, "transport", None)
+                if transport is not None and hasattr(transport, "close"):
+                    transport.close()
+            except Exception as exc:
+                logger.debug("XMPP: error closing transport: %s", exc)
 
     # -- Sending -------------------------------------------------------------
 
@@ -443,32 +457,30 @@ class XMPPAdapter(BasePlatformAdapter):
             logger.error("XMPP: invalid recipient JID %s: %s", chat_id, exc)
             return SendResult(success=False, error="invalid recipient jid")
 
-        cached_resource = self._last_resources.get(str(recipient.bare))
+        recipient_bare = str(recipient.bare)
+
+        # Note: auto-TTS voice replies are handled by the gateway calling
+        # send_voice() directly; send() delivers the matching text response.
+        if recipient_bare in self._voice_reply_chats:
+            self._voice_reply_chats.discard(recipient_bare)
+
+        force_omemo = self.omemo_enabled and recipient_bare in self._omemo_chats
+
+        # For OMEMO chats always target the bare JID; slixmpp-omemo will encrypt
+        # for every published device and Conversations/Gajim will deliver to all
+        # active resources. Do not queue just because we have not seen a resource.
+        if force_omemo:
+            logger.info("XMPP: sending OMEMO message to bare JID %s", recipient_bare)
+            return await self._send_text(recipient.bare, content)
+
+        # Plaintext: use the last known full resource if we have one; otherwise
+        # fall back to the bare JID.
+        cached_resource = self._last_resources.get(recipient_bare)
         if cached_resource:
             try:
                 recipient = JID(cached_resource)
             except Exception as exc:
                 logger.warning("XMPP: could not use cached resource %s: %s", cached_resource, exc)
-
-        chat_id_str = str(recipient.bare)
-        # Note: auto-TTS voice replies are handled by the gateway calling
-        # send_voice() directly; send() delivers the matching text response.
-        if chat_id_str in self._voice_reply_chats:
-            self._voice_reply_chats.discard(chat_id_str)
-
-        # If we do not yet have a resource for this contact and OMEMO is
-        # enabled, queue the message. It will be flushed once an inbound
-        # message arrives with a usable resource. This fixes restart
-        # notifications that are sent before the contact's device list is known.
-        if self.omemo_enabled and not cached_resource:
-            entry = self._pending_messages.setdefault(chat_id_str, {"messages": [], "sent_to": set()})
-            entry["messages"].append(content)
-            logger.info(
-                "XMPP: queued message for %s until a resource is known (pending: %d)",
-                chat_id_str,
-                len(entry["messages"]),
-            )
-            return SendResult(success=True)
 
         return await self._send_text(recipient, content)
 
