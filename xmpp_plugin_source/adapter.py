@@ -475,6 +475,8 @@ class XMPPAdapter(BasePlatformAdapter):
 
         recipient_bare = str(recipient.bare)
         force_omemo = self.omemo_enabled and recipient_bare in self._omemo_chats
+        if force_omemo:
+            logger.info("XMPP: forcing OMEMO for %s", recipient_bare)
 
         try:
             for i, chunk in enumerate(chunks):
@@ -899,8 +901,16 @@ class XMPPAdapter(BasePlatformAdapter):
         except Exception as exc:
             logger.warning("XMPP: cannot flush pending messages to invalid JID %s: %s", sender_bare, exc)
             return
+
+        async def _send_one(text: str) -> None:
+            result = await self._send_text(recipient, text)
+            if result.success:
+                logger.info("XMPP: flushed queued message to %s", sender_bare)
+            else:
+                logger.warning("XMPP: flushed queued message to %s failed: %s", sender_bare, result.error)
+
         for text in pending:
-            asyncio.create_task(self._send_text(recipient, text))
+            asyncio.create_task(_send_one(text))
 
     def _build_source(self, sender_bare: str) -> Any:
         from gateway.session import SessionSource
