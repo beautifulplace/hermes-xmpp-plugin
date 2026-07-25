@@ -395,7 +395,7 @@ def remove_xmpp_config(config_text: str) -> str:
         new_block.append(line)
 
     # If platforms block only contains the "platforms:" line now, remove it.
-    non_comment = [l for l in new_block if l.strip() and not l.lstrip().startswith("#")]
+    non_comment = [line for line in new_block if line.strip() and not line.lstrip().startswith("#")]
     if non_comment == ["platforms:"]:
         lines[start:end] = []
     else:
