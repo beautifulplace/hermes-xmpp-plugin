@@ -69,6 +69,15 @@ def test_disable_plugin_removes():
     config = "plugins:\n  enabled:\n    - platforms/xmpp\n"
     result = disable_plugin(config)
     assert "platforms/xmpp" not in result
+    # Empty plugins block is removed to avoid leftover clutter.
+    assert "plugins:" not in result
+
+
+def test_disable_plugin_preserves_other_plugins():
+    config = "plugins:\n  enabled:\n    - platforms/xmpp\n    - platforms/other\n"
+    result = disable_plugin(config)
+    assert "platforms/xmpp" not in result
+    assert "- platforms/other" in result
     assert "plugins:" in result
 
 
