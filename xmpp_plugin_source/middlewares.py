@@ -1,344 +1,208 @@
-"""Inbound message middlewares for the Hermes XMPP platform adapter.
-
-The XMPP adapter uses a lightweight middleware pipeline inspired by the Yuanbao
-adapter. Each middleware receives an InboundContext and calls next_fn() to pass
-control down the chain. This keeps message handling concerns separated and
-testable.
-"""
-
-from __future__ import annotations
-
 import asyncio
 import logging
+import mimetypes
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
 from gateway.platforms.base import MessageEvent, MessageType
-from slixmpp.jid import JID
-from slixmpp.stanza import Message
-from tools.transcription_tools import transcribe_audio
+
+from .media import cache_media, is_aesgcm_url
+from .xmpp_utils import extract_url, is_voice_url
+
+if TYPE_CHECKING:
+    from .adapter import XMPPAdapter
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class InboundContext:
-    """Mutable context flowing through the inbound middleware pipeline."""
-
-    adapter: Any  # XMPPAdapter (forward ref avoids circular import)
-    msg: Message
-
-    sender_full: JID = field(default_factory=lambda: JID(""))
+    adapter: "XMPPAdapter"
+    msg: Any
     sender_bare: str = ""
+    sender_full: str = ""
     body: str = ""
-    is_encrypted: bool = False
+    body_plain: str = ""
     is_voice: bool = False
-    media_path: Optional[Any] = None
-    auto_sethome_performed: bool = False
-    event: Optional[MessageEvent] = None
-    reply_text: str = ""  # Optional reply injected by middleware
+    media_urls: List[str] = field(default_factory=list)
+    media_types: List[str] = field(default_factory=list)
     markable_requested: bool = False
+    event: Optional[MessageEvent] = None
 
 
-class InboundMiddleware:
-    """Base class for inbound pipeline middlewares."""
-
-    name: str = ""
-
-    async def handle(self, ctx: InboundContext, next_fn: Callable) -> None:
+class Middleware:
+    async def handle(self, ctx: InboundContext) -> None:
         raise NotImplementedError
 
-    async def __call__(self, ctx: InboundContext, next_fn: Callable) -> None:
-        await self.handle(ctx, next_fn)
 
-
-class ValidateMiddleware(InboundMiddleware):
-    """Drop non-chat messages and self-messages."""
-
-    name = "validate"
-
-    async def handle(self, ctx: InboundContext, next_fn: Callable) -> None:
-        msg = ctx.msg
-        if msg.get("type") not in ("chat", "normal"):
-            return
-        sender = msg["from"]
-        if not sender:
-            return
-        ctx.sender_full = JID(sender)
-        ctx.sender_bare = str(ctx.sender_full.bare)
-        ctx.adapter._last_resources[ctx.sender_bare] = str(ctx.sender_full)
-        markable_el = msg.xml.find(".//{urn:xmpp:chat-markers:0}markable")
-        ctx.markable_requested = markable_el is not None
-        if ctx.sender_bare == str(JID(ctx.adapter.user_jid).bare):
-            logger.debug("XMPP: ignoring self-message from %s", ctx.sender_bare)
-            return
-        await next_fn()
-
-
-class OMEMODecryptMiddleware(InboundMiddleware):
-    """Decrypt OMEMO payloads; otherwise keep plaintext body."""
-
-    name = "omemo-decrypt"
-
-    async def handle(self, ctx: InboundContext, next_fn: Callable) -> None:
-        msg = ctx.msg
-        ctx.body = str(msg.get("body", "") or "").strip()
-
-        omemo = ctx.adapter._omemo_plugin()
-        if omemo is None or not ctx.adapter.omemo_enabled:
-            await next_fn()
-            return
-
-        namespaces = ("eu.siacs.conversations.axolotl", "urn:xmpp:omemo:2")
-        has_encrypted = any(
-            msg.xml.find(f".//{{{ns}}}encrypted") is not None for ns in namespaces
-        )
-        if not has_encrypted:
-            await next_fn()
-            return
-
-        try:
-            decrypted, _device_info = await omemo.decrypt_message(msg)
-            decrypted_body = str(decrypted.get("body", "") or "").strip()
-            if decrypted_body:
-                ctx.body = decrypted_body
-                ctx.is_encrypted = True
-                # Remember that this chat uses OMEMO so all replies are encrypted.
-                if ctx.sender_bare:
-                    ctx.adapter._omemo_chats.add(ctx.sender_bare)
-                logger.info(
-                    "XMPP: OMEMO decrypted message from %s: %d chars",
-                    ctx.sender_bare,
-                    len(ctx.body),
-                )
-        except Exception as exc:
-            logger.warning("XMPP: OMEMO decrypt attempt failed: %s", exc)
-            # Fall back to plaintext body (if any).
-
-        await next_fn()
-
-
-class MediaResolveMiddleware(InboundMiddleware):
-    """Download/decrypt inbound media URLs and update the body accordingly."""
-
-    name = "media-resolve"
-
-    async def handle(self, ctx: InboundContext, next_fn: Callable) -> None:
-        from .media import resolve_inbound_media
-        from .xmpp_utils import extract_url, is_voice_url
-
-        if not ctx.body:
-            await next_fn()
-            return
-
-        url = extract_url(ctx.body) or ""
-        is_voice = ctx.is_voice or is_voice_url(url, ctx.body)
-        kind = "audio" if is_voice else "image"
-        clean_body, path = await resolve_inbound_media(ctx.body, ctx.adapter._http, kind=kind)
-        ctx.body = clean_body
-        ctx.media_path = path
-        if path:
-            logger.info("XMPP: cached inbound %s media to %s", kind, path)
-        await next_fn()
-
-
-class VoiceDetectMiddleware(InboundMiddleware):
-    """Mark audio-only messages as voice messages before media resolution."""
-
-    name = "voice-detect"
-
-    async def handle(self, ctx: InboundContext, next_fn: Callable) -> None:
-        from .xmpp_utils import extract_url, is_voice_url
-
-        if ctx.body:
-            url = extract_url(ctx.body) or ""
-            ctx.is_voice = is_voice_url(url, ctx.body)
-        await next_fn()
-
-
-class TranscribeVoiceMiddleware(InboundMiddleware):
-    """Transcribe inbound voice/audio messages so the LLM receives text."""
-
-    name = "transcribe-voice"
-
-    async def handle(self, ctx: InboundContext, next_fn: Callable) -> None:
-        if not ctx.media_path:
-            await next_fn()
-            return
-
-        # If we downloaded a media file that is actually audio, treat it as
-        # a voice message regardless of the earlier URL heuristic.
-        from .xmpp_utils import guess_extension_from_data
-
-        audio_exts = {".m4a", ".mp4", ".ogg", ".oga", ".opus", ".mp3", ".webm", ".wav"}
-        data = ctx.media_path.read_bytes()
-        detected_ext = guess_extension_from_data(data)
-        if detected_ext in audio_exts:
-            ctx.is_voice = True
-
-        if not ctx.is_voice:
-            await next_fn()
-            return
-
-        try:
-            result = await asyncio.to_thread(transcribe_audio, str(ctx.media_path))
-            if isinstance(result, dict):
-                transcript = result.get("transcript", "").strip()
-                error = result.get("error", "")
-            else:
-                transcript = str(result).strip()
-                error = ""
-
-            if transcript:
-                ctx.body = transcript
-                logger.info(
-                    "XMPP: transcribed voice message from %s: %r",
-                    ctx.sender_bare,
-                    transcript,
-                )
-            else:
-                ctx.body = "(voice message could not be transcribed)"
-                if error:
-                    logger.warning("XMPP: voice transcription failed: %s", error)
-
-            auto_tts_default = getattr(ctx.adapter, "_auto_tts_default", False)
-            if auto_tts_default and ctx.sender_bare:
-                ctx.adapter._voice_reply_chats.add(ctx.sender_bare)
-                logger.info(
-                    "XMPP: queued voice reply for chat %s (auto_tts_default=%s)",
-                    ctx.sender_bare,
-                    auto_tts_default,
-                )
-        except Exception as exc:
-            logger.warning("XMPP: voice transcription error: %s", exc)
-            ctx.body = "(voice message could not be transcribed)"
-
-        await next_fn()
-
-
-class ReadReceiptMiddleware(InboundMiddleware):
-    """Send XEP-0333 displayed marker when the stanza requests one."""
-
-    name = "read-receipt"
-
-    async def handle(self, ctx: InboundContext, next_fn: Callable) -> None:
-        await next_fn()
-        if not ctx.markable_requested or not ctx.sender_bare or not ctx.msg.get("id"):
-            return
-        try:
-            ctx.adapter._send_displayed_marker(ctx.sender_bare, ctx.msg["id"])
-        except Exception as exc:
-            logger.debug("XMPP: failed to send displayed marker: %s", exc, exc_info=True)
-
-
-class AutoSethomeMiddleware(InboundMiddleware):
-    """Designate the first authorized contact's bare JID as the XMPP home channel."""
-
-    name = "auto-sethome"
-
-    async def handle(self, ctx: InboundContext, next_fn: Callable) -> None:
-        await next_fn()
-
-        adapter = ctx.adapter
-        if ctx.auto_sethome_performed or adapter._auto_sethome_done:
-            return
-        if not ctx.sender_bare:
-            return
-        if not adapter._sender_may_designate_home(ctx.sender_bare):
-            return
-
-        current_home = (adapter.home_channel or "").strip()
-        if current_home:
-            return
-
-        try:
-            adapter._set_home_channel(ctx.sender_bare)
-            adapter._auto_sethome_done = True
-            ctx.auto_sethome_performed = True
-            ctx.reply_text = (
-                f"I've set your JID ({ctx.sender_bare}) as my XMPP home channel. "
-                "Future system messages and handoffs will come here. "
-                "You can change this anytime with `/sethome` or by editing "
-                "`platforms.xmpp.home_channel` in ~/.hermes/config.yaml."
-            )
-            logger.info("XMPP: auto-sethome designated %s as home channel", ctx.sender_bare)
-        except Exception as exc:
-            logger.warning("XMPP: auto-sethome failed: %s", exc)
-
-
-class BuildEventMiddleware(InboundMiddleware):
-    """Build the MessageEvent and hand it to the gateway."""
-
-    name = "build-event"
-
-    async def handle(self, ctx: InboundContext, next_fn: Callable) -> None:
-        if not ctx.body and not ctx.media_path:
-            await next_fn()
-            return
-
-        from .xmpp_utils import guess_extension_from_data, mime_from_extension
-
-        media_urls: list[str] = []
-        media_types: list[str] = []
-        msg_type = MessageType.TEXT
-
-        if ctx.media_path and ctx.media_path.exists():
-            path_str = str(ctx.media_path)
-            data = ctx.media_path.read_bytes()
-            ext = guess_extension_from_data(data) or Path(ctx.media_path).suffix.lower()
-            mtype = mime_from_extension(ext)
-            media_urls.append(path_str)
-            media_types.append(mtype)
-
-            audio_exts = {".m4a", ".mp4", ".ogg", ".oga", ".opus", ".mp3", ".webm", ".wav"}
-            if ctx.is_voice or ext in audio_exts:
-                msg_type = MessageType.VOICE
-            elif mtype.startswith("image/"):
-                msg_type = MessageType.PHOTO
-            elif mtype.startswith("video/"):
-                msg_type = MessageType.VIDEO
-            else:
-                msg_type = MessageType.DOCUMENT
-
-            # If the body is just the local cache path, replace it with an
-            # empty caption so the gateway fills in a media placeholder.
-            if ctx.body.strip() == path_str:
-                ctx.body = ""
-
-        text = ctx.body or ""
-        event = MessageEvent(
-            text=text,
-            message_type=msg_type,
-            source=ctx.adapter._build_source(ctx.sender_bare),
-            metadata={"resource": str(ctx.sender_full)},
-            media_urls=media_urls,
-            media_types=media_types,
-        )
-        ctx.event = event
-
-        # If a middleware injected a reply, deliver it before calling the agent.
-        if ctx.reply_text:
-            await ctx.adapter.send(ctx.sender_bare, ctx.reply_text)
-
-        await ctx.adapter.handle_message(event)
-        await next_fn()
-
-
-class InboundPipeline:
-    """Simple onion-style middleware pipeline."""
-
-    def __init__(self, middlewares: list[InboundMiddleware]):
-        self._middlewares = middlewares
+class MiddlewarePipeline:
+    def __init__(self, middlewares: List[Middleware]):
+        self.middlewares = middlewares
 
     async def run(self, ctx: InboundContext) -> None:
-        index = 0
+        for mw in self.middlewares:
+            try:
+                await mw.handle(ctx)
+            except Exception as exc:
+                logger.exception("XMPP middleware %s failed: %s", mw.__class__.__name__, exc)
+                raise
 
-        async def next_fn() -> None:
-            nonlocal index
-            if index < len(self._middlewares):
-                mw = self._middlewares[index]
-                index += 1
-                await mw(ctx, next_fn)
+    @classmethod
+    def build(cls, adapter: "XMPPAdapter") -> "MiddlewarePipeline":
+        return cls([
+            ValidateMiddleware(),
+            MarkableMiddleware(),
+            OMEMODecryptMiddleware(),
+            VoiceDetectMiddleware(),
+            MediaResolveMiddleware(),
+            TranscribeVoiceMiddleware(),
+            ReadReceiptMiddleware(),
+            AutoSethomeMiddleware(),
+            BuildEventMiddleware(),
+        ])
 
-        await next_fn()
+
+class ValidateMiddleware(Middleware):
+    async def handle(self, ctx: InboundContext) -> None:
+        body = ctx.msg.get("body", "")
+        if body is None:
+            body = ""
+        ctx.body = str(body)
+        ctx.body_plain = ctx.body
+
+
+class MarkableMiddleware(Middleware):
+    async def handle(self, ctx: InboundContext) -> None:
+        try:
+            xml = getattr(ctx.msg, "xml", None)
+            if xml is not None:
+                ctx.markable_requested = xml.find(".{http://jabber.shiguangqiu.top/ns/markers}markable") is not None
+        except Exception as exc:
+            logger.debug("XMPP: could not check markable: %s", exc)
+
+
+class OMEMODecryptMiddleware(Middleware):
+    async def handle(self, ctx: InboundContext) -> None:
+        if not ctx.adapter.omemo_enabled:
+            return
+        omemo = ctx.adapter._omemo_plugin()
+        if omemo is None:
+            return
+        try:
+            result = await omemo.decrypt_message(ctx.msg)
+            if result is not None and hasattr(result, "body") and result.body:
+                ctx.body = result.body
+                ctx.adapter._omemo_chats.add(ctx.sender_bare)
+                logger.info("XMPP: OMEMO decrypted message from %s: %d chars", ctx.sender_bare, len(ctx.body))
+            else:
+                logger.debug("XMPP: OMEMO decrypt produced no body from %s", ctx.sender_bare)
+        except Exception as exc:
+            logger.debug("XMPP: OMEMO decrypt failed for %s: %s", ctx.sender_bare, exc)
+
+
+class VoiceDetectMiddleware(Middleware):
+    async def handle(self, ctx: InboundContext) -> None:
+        url = extract_url(ctx.body)
+        if url and is_voice_url(url):
+            ctx.is_voice = True
+            logger.debug("XMPP: detected voice URL from %s", ctx.sender_bare)
+
+
+class MediaResolveMiddleware(Middleware):
+    async def handle(self, ctx: InboundContext) -> None:
+        url = extract_url(ctx.body)
+        if not url or not is_aesgcm_url(url):
+            return
+        try:
+            local_path = await cache_media(url)
+            if local_path and Path(local_path).exists():
+                ctx.media_urls.append(local_path)
+                mime, _ = mimetypes.guess_type(local_path)
+                ctx.media_types.append(mime or "application/octet-stream")
+                logger.info("XMPP: cached inbound media for %s: %s", ctx.sender_bare, local_path)
+        except Exception as exc:
+            logger.warning("XMPP: media resolve failed for %s: %s", ctx.sender_bare, exc)
+
+
+class TranscribeVoiceMiddleware(Middleware):
+    async def handle(self, ctx: InboundContext) -> None:
+        if not ctx.media_urls:
+            return
+
+        # Detect audio by content even if the URL heuristic missed it.
+        audio_path = None
+        for path, mime in zip(ctx.media_urls, ctx.media_types):
+            if mime and mime.startswith("audio/"):
+                audio_path = path
+                ctx.is_voice = True
+                break
+            ext = Path(path).suffix.lower()
+            if ext in {".m4a", ".mp3", ".ogg", ".wav", ".flac", ".aac", ".opus"}:
+                audio_path = path
+                ctx.is_voice = True
+                break
+
+        if not audio_path or not ctx.is_voice:
+            return
+
+        if not getattr(ctx.adapter, "_auto_tts_default", True):
+            return
+
+        try:
+            from tools.transcription_tools import transcribe_audio
+            transcript = await asyncio.to_thread(transcribe_audio, audio_path)
+            if transcript:
+                ctx.body = transcript
+                ctx.adapter._voice_reply_chats.add(ctx.sender_bare)
+                logger.info("XMPP: transcribed voice message from %s: %r", ctx.sender_bare, transcript)
+        except Exception as exc:
+            logger.warning("XMPP: voice transcription failed for %s: %s", ctx.sender_bare, exc)
+
+
+class ReadReceiptMiddleware(Middleware):
+    async def handle(self, ctx: InboundContext) -> None:
+        if not ctx.markable_requested:
+            return
+        try:
+            await ctx.adapter._send_displayed_marker(ctx.sender_full, ctx.msg.get("id"))
+        except Exception as exc:
+            logger.debug("XMPP: read receipt send failed: %s", exc)
+
+
+class AutoSethomeMiddleware(Middleware):
+    async def handle(self, ctx: InboundContext) -> None:
+        # No-op placeholder; Hermes handles home chat routing elsewhere.
+        pass
+
+
+class BuildEventMiddleware(Middleware):
+    async def handle(self, ctx: InboundContext) -> None:
+        if ctx.media_urls:
+            # If the only content is a media URL, clear body so the gateway inserts placeholders.
+            if ctx.body and extract_url(ctx.body) and ctx.body.strip() == ctx.media_urls[0]:
+                ctx.body = ""
+
+        message_type = MessageType.TEXT
+        if ctx.media_urls:
+            first_mime = ctx.media_types[0] if ctx.media_types else ""
+            if first_mime.startswith("image/"):
+                message_type = MessageType.PHOTO
+            elif first_mime.startswith("audio/"):
+                message_type = MessageType.VOICE
+            elif first_mime.startswith("video/"):
+                message_type = MessageType.VIDEO
+            else:
+                message_type = MessageType.DOCUMENT
+
+        ctx.event = MessageEvent(
+            platform="xmpp",
+            chat_id=ctx.sender_bare,
+            user_id=ctx.sender_bare,
+            message_id=ctx.msg.get("id") or "",
+            text=ctx.body,
+            message_type=message_type,
+            media_urls=ctx.media_urls,
+            media_types=ctx.media_types,
+            raw_message=ctx.msg,
+        )
