@@ -708,27 +708,7 @@ class XMPPAdapter(BasePlatformAdapter):
             return SendResult(success=False, error=f"audio file not found: {audio_path}")
 
         audio_bytes = audio_path_obj.read_bytes()
-        ext = audio_path_obj.suffix.lower() or ".m4a"
-        converted_path: Optional[Path] = None
-
-        if ext == ".mp3":
-            try:
-                converted_path = Path(tempfile.gettempdir()) / f"voice_{uuid.uuid4().hex}.m4a"
-                proc = await asyncio.create_subprocess_exec(
-                    "ffmpeg", "-y", "-i", str(audio_path_obj), "-c:a", "aac", "-b:a", "32k", str(converted_path),
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                )
-                stdout, stderr = await proc.communicate()
-                if proc.returncode == 0 and converted_path.exists():
-                    audio_path_obj = converted_path
-                    audio_bytes = audio_path_obj.read_bytes()
-                    ext = ".m4a"
-                    logger.info("XMPP: converted TTS mp3 to m4a: %s", converted_path)
-                else:
-                    logger.warning("XMPP: ffmpeg mp3->m4a failed: %s", stderr.decode()[:200])
-            except Exception as exc:
-                logger.warning("XMPP: could not convert mp3 to m4a: %s", exc)
-
+        ext = audio_path_obj.suffix.lower() or ".mp3"
         content_type = _mime_from_extension(ext)
         filename = f"voice_{uuid.uuid4().hex}{ext}"
 
