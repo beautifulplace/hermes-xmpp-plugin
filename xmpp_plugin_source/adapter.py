@@ -896,21 +896,22 @@ class XMPPAdapter(BasePlatformAdapter):
         if not pending:
             return
         logger.info("XMPP: flushing %d pending message(s) to %s", len(pending), sender_bare)
-        try:
-            recipient = JID(sender_bare)
-        except Exception as exc:
-            logger.warning("XMPP: cannot flush pending messages to invalid JID %s: %s", sender_bare, exc)
-            return
+
+        # Use the specific resource that just sent a message; this is the
+        # device the user is currently active on, so OMEMO will target it
+        # correctly instead of guessing across all (possibly stale) devices.
+        recipient = self._last_resources.get(sender_bare, sender_bare)
+        logger.info("XMPP: flushing queued message(s) via %s", recipient)
 
         for text in pending:
             try:
-                result = await self._send_text(recipient, text)
+                result = await self.send(recipient, text)
                 if result.success:
-                    logger.info("XMPP: flushed queued message to %s", sender_bare)
+                    logger.info("XMPP: flushed queued message to %s", recipient)
                 else:
-                    logger.warning("XMPP: flushed queued message to %s failed: %s", sender_bare, result.error)
+                    logger.warning("XMPP: flushed queued message to %s failed: %s", recipient, result.error)
             except Exception as exc:
-                logger.exception("XMPP: flushed queued message to %s raised: %s", sender_bare, exc)
+                logger.exception("XMPP: flushed queued message to %s raised: %s", recipient, exc)
 
     def _build_source(self, sender_bare: str) -> Any:
         from gateway.session import SessionSource
