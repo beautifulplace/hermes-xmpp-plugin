@@ -926,6 +926,31 @@ class XMPPAdapter(BasePlatformAdapter):
             logger.warning("XMPP: file upload failed: %s", exc)
             return None
 
+    async def _keep_typing(self, chat_id: str, interval: float = 2.0, metadata=None, stop_event: asyncio.Event | None = None) -> None:
+        """
+        XMPP-owned typing lifecycle.
+
+        The base adapter's generic refresh loop passes an ``interrupt_event``
+        that gets swapped out by ``/new`` and other session-reset commands, so
+        the base loop can become orphaned and keep calling ``send_typing()``
+        forever.  For XMPP we ignore that loop and drive typing state directly:
+        this method resets the anti-resurrection cooldown for a fresh turn and
+        sends one ``<composing/>`` stanza, which starts a self-owned 2-second
+        refresh task that we cancel deterministically from ``stop_typing()``.
+        """
+        if not self.typing_indicator or self.client is None:
+            return
+        try:
+            recipient_str = self._last_resources.get(chat_id, chat_id)
+            chat_key = str(JID(recipient_str).bare)
+        except Exception:
+            chat_key = chat_id
+        # A fresh turn is starting; clear any stale stop cooldown so the user
+        # sees the composing indicator for this new genuine turn.
+        self._typing_stop_until.pop(chat_key, None)
+        self._typing_state.pop(chat_key, None)
+        await self.send_typing(chat_id, metadata=metadata)
+
     async def send_typing(self, chat_id: str, metadata=None) -> None:
         if not self.typing_indicator or self.client is None:
             logger.debug("XMPP: send_typing skipped (disabled or no client)")
@@ -937,20 +962,22 @@ class XMPPAdapter(BasePlatformAdapter):
             chat_key = str(recipient.bare)
             now = asyncio.get_event_loop().time()
             # If we recently stopped typing for this chat, ignore stray refresh
-            # ticks from the base adapter's _keep_typing loop.
+            # ticks from any orphaned loop.
             if self._typing_stop_until.get(chat_key, 0.0) > now:
                 logger.debug("XMPP: send_typing suppressed for %s (cooldown active)", chat_key)
+                return
+            # Don't resurrect composing if we already deliberately stopped.
+            if self._typing_state.get(chat_key) == "active":
+                logger.debug("XMPP: send_typing suppressed for %s (state is active)", chat_key)
                 return
             msg = self.client.make_message(mto=recipient, mtype="chat")
             msg["chat_state"] = "composing"
             msg.send()
             self._typing_state[chat_key] = "composing"
             logger.warning("XMPP: typing indicator sent to %s", recipient)
-            # Start a self-owned refresh loop for XEP-0085 chat states.  The base
-            # adapter also keeps its own _keep_typing task, but that task can be
-            # orphaned when the session guard is swapped by /new.  Re-sending
-            # composing from our own loop is harmless because the cooldown in
-            # send_typing() prevents it when we have deliberately stopped.
+            # Start a self-owned refresh loop for XEP-0085 chat states.  This is
+            # the only refresh loop we rely on; the base adapter's generic loop
+            # is overridden above to a single send + this refresh.
             self._ensure_typing_refresh_task(chat_key, recipient)
         except Exception as exc:
             logger.warning("XMPP: typing indicator send failed: %s", exc)
@@ -979,6 +1006,11 @@ class XMPPAdapter(BasePlatformAdapter):
         task = self._typing_refresh_tasks.pop(chat_key, None)
         if task is not None and not task.done():
             task.cancel()
+        # Once we cancel, reset state so a future genuine turn can type again.
+        # We deliberately do NOT clear _typing_stop_until here; that cooldown is
+        # managed by stop_typing() and protects against orphaned ticks.
+        if self._typing_state.get(chat_key) == "composing":
+            self._typing_state.pop(chat_key, None)
 
     async def stop_typing(self, chat_id: str, metadata=None) -> None:
         if not self.typing_indicator or self.client is None:
