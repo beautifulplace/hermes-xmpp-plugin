@@ -16,8 +16,22 @@ XMPP gateway adapter for [Hermes Agent](https://github.com/NousResearch/hermes-a
 ## Requirements
 
 - Python 3.10+
-- A running [Hermes Agent](https://github.com/NousResearch/hermes-agent) gateway
+: [https://github.com/NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) gateway
 - An XMPP account for the bot
+- `ffmpeg` (for voice replies; converts TTS MP3 output to M4A for Conversations)
+  ```bash
+  # Debian/Ubuntu/Raspberry Pi OS
+  sudo apt install ffmpeg
+
+  # Fedora/RHEL
+  sudo dnf install ffmpeg
+
+  # Arch Linux
+  sudo pacman -S ffmpeg
+
+  # macOS
+  brew install ffmpeg
+  ```
 
 ## Installation
 
