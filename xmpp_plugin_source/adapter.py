@@ -197,27 +197,14 @@ class XMPPAdapter(BasePlatformAdapter):
             self._set_fatal_error("missing_credentials", "XMPP credentials missing", retryable=False)
             return False
 
-        # If a previous cleanup left the client set, force a hard reset before
-        # creating a new one. This prevents slixmpp reconnection hangs when the
-        # old transport is stuck.
+        # If a previous reconnect left the client set, detach it so we create a
+        # fresh one. The old client will be cleaned up in the background.
         if is_reconnect and self.client is not None:
-            logger.info("XMPP: hard client reset before reconnect")
-            try:
-                self.client.disconnect()
-            except Exception:
-                pass
-            try:
-                transport = getattr(self.client, "transport", None)
-                if transport is not None and hasattr(transport, "close"):
-                    transport.close()
-            except Exception:
-                pass
+            logger.info("XMPP: detaching stale client before reconnect")
+            old_client = self.client
             self.client = None
             self._active_client = None
-
-        if is_reconnect:
-            logger.info("XMPP: tearing down old client before reconnect")
-            await self._cleanup_client()
+            asyncio.create_task(self._cleanup_client_core(old_client))
 
         self._session_started_event.clear()
         self._omemo_ready_event.clear()
@@ -304,7 +291,7 @@ class XMPPAdapter(BasePlatformAdapter):
             logger.warning("XMPP: client future ended with error: %s", exc)
         if self.is_connected:
             logger.warning("XMPP: client future ended while still marked connected")
-            self._mark_disconnected(code="client_future_done", message="slixmpp connection future ended")
+            self._schedule_internal_reconnect("client_future_done", "slixmpp connection future ended")
 
     async def _finish_setup(self):
         if self.omemo_enabled:
@@ -331,42 +318,80 @@ class XMPPAdapter(BasePlatformAdapter):
         self._avatar_republish_task = asyncio.create_task(_republish_after_delay())
 
     async def _keepalive_loop(self) -> None:
+        """Send whitespace keepalives and optional XEP-0199 pings.
+
+        A failed or timed-out ping is NOT treated as a connection loss here;
+        some servers / network paths silently drop pings or take longer than
+        our timeout. We rely on slixmpp's own disconnected event for real
+        connection-loss detection.
+        """
         while self.is_connected:
             await asyncio.sleep(self._ping_interval)
             if not self.is_connected or self.client is None:
                 break
             try:
+                # Always send a raw whitespace keepalive; this is enough to
+                # keep most NAT/firewall sessions alive and is non-blocking.
+                self.client.send_raw(" ")
+                self._last_activity = asyncio.get_event_loop().time()
+
+                # Optionally send an XEP-0199 ping for diagnostic purposes only.
                 ping = self.client.plugin.get("xep_0199", None)
                 if ping is not None:
                     logger.debug("XMPP: sending keepalive ping")
-                    await asyncio.wait_for(
-                        ping.send_ping(jid=self.client.boundjid.bare),
-                        timeout=self._ping_timeout,
-                    )
-                    self._last_activity = asyncio.get_event_loop().time()
-                else:
-                    self.client.send_raw(" ")
-                    self._last_activity = asyncio.get_event_loop().time()
+                    try:
+                        await asyncio.wait_for(
+                            ping.send_ping(jid=self.client.boundjid.bare),
+                            timeout=self._ping_timeout,
+                        )
+                        self._last_activity = asyncio.get_event_loop().time()
+                    except asyncio.TimeoutError:
+                        logger.debug("XMPP: keepalive ping timed out; not treating as disconnect")
+                    except Exception as exc:
+                        logger.debug("XMPP: keepalive ping failed: %s", exc)
             except Exception as exc:
-                logger.warning("XMPP: keepalive ping failed: %s", exc)
-                if self.is_connected:
-                    self._schedule_internal_reconnect("ping_failed", str(exc))
-                break
+                logger.warning("XMPP: keepalive send failed: %s", exc)
+                # Do not break; let slixmpp signal a real disconnect if needed.
 
     def _schedule_internal_reconnect(self, code: str, message: str) -> None:
-        """Do not attempt an internal reconnect loop.
+        """Recover from a detected connection loss without blocking the loop.
 
-        Internal reconnect has been observed to hang indefinitely inside
-        slixmpp client teardown, blocking /restart and forcing console reboots.
-        Mark the adapter as disconnected so the gateway or systemd can restart
-        the process cleanly instead.
+        slixmpp client teardown has been observed to hang, so we abandon the
+        stale client in a background cleanup task and immediately start a fresh
+        connection. The old client is no longer referenced by the adapter, and
+        any late events from it are ignored via the per-client disconnect
+        handler.
         """
         if self._shutting_down:
             return
         if not self.is_connected:
             return
-        logger.warning("XMPP: connection lost (%s: %s); marking disconnected for gateway restart", code, message)
+        logger.warning("XMPP: connection lost (%s: %s); reconnecting", code, message)
         self._mark_disconnected(code=code, message=message)
+
+        async def _recover():
+            # Fire-and-forget cleanup of the old client; do not wait for it.
+            old_client = self.client
+            self.client = None
+            self._active_client = None
+            self._keepalive_task = None
+            if old_client is not None:
+                try:
+                    await self._cleanup_client_core(old_client)
+                except Exception as exc:
+                    logger.debug("XMPP: background cleanup of old client failed: %s", exc)
+
+            # Reconnect with a fresh client.
+            try:
+                result = await self.connect(is_reconnect=True)
+                if result:
+                    logger.info("XMPP: reconnect succeeded")
+                else:
+                    logger.warning("XMPP: reconnect failed")
+            except Exception as exc:
+                logger.warning("XMPP: reconnect attempt failed: %s", exc)
+
+        asyncio.create_task(_recover())
 
     def _make_disconnected_handler(self, client: Any):
         """Return a disconnect handler bound to one specific slixmpp client."""
@@ -378,7 +403,7 @@ class XMPPAdapter(BasePlatformAdapter):
             if self._shutting_down:
                 return
             if self.is_connected:
-                self._mark_disconnected(code="disconnected", message=str(event))
+                self._schedule_internal_reconnect("disconnected", str(event))
         return handler
 
     async def disconnect(self) -> None:
@@ -387,8 +412,16 @@ class XMPPAdapter(BasePlatformAdapter):
         self._mark_disconnected()
 
     async def _cleanup_client(self) -> None:
-        # Cancel and detach all background tasks first so nothing keeps the
-        # stale client alive while we tear it down.
+        """Synchronous-style cleanup used during graceful shutdown."""
+        await self._cleanup_client_core(self.client, clear_self=True)
+
+    async def _cleanup_client_core(self, client: Optional[Any], clear_self: bool = False) -> None:
+        """Best-effort cleanup of a single slixmpp client.
+
+        This can be called either for the currently attached client during
+        shutdown, or for a stale client that has already been replaced. It
+        avoids waiting indefinitely for slixmpp disconnect events.
+        """
         for task in list(self._xmpp_background_tasks):
             if not task.done():
                 task.cancel()
@@ -396,47 +429,51 @@ class XMPPAdapter(BasePlatformAdapter):
 
         if self._keepalive_task and not self._keepalive_task.done():
             self._keepalive_task.cancel()
-        self._keepalive_task = None
+        if clear_self:
+            self._keepalive_task = None
 
         if self._internal_reconnect_task and not self._internal_reconnect_task.done():
             self._internal_reconnect_task.cancel()
-        self._internal_reconnect_task = None
+        if clear_self:
+            self._internal_reconnect_task = None
 
         if self._avatar_republish_task and not self._avatar_republish_task.done():
             self._avatar_republish_task.cancel()
-        self._avatar_republish_task = None
+        if clear_self:
+            self._avatar_republish_task = None
 
-        if self.client is not None:
-            stale_client = self.client
+        if client is None:
+            return
+
+        if clear_self:
             self.client = None
             self._active_client = None
-            try:
-                stale_client.del_event_handler("session_start", self._session_start)
-                stale_client.del_event_handler("message", self._on_message)
-                stale_client.del_event_handler("presence", self._on_presence)
-                stale_client.del_event_handler("exception", self._slixmpp_exception_handler)
-                if hasattr(self, "_current_disconnected_handler"):
-                    stale_client.del_event_handler("disconnected", self._current_disconnected_handler)
-                stale_client.del_event_handler("omemo_initialized", self._omemo_initialized)
-            except Exception as exc:
-                logger.debug("XMPP: error removing event handlers during cleanup: %s", exc)
-            # Disconnect with a tight timeout; do not wait forever for slixmpp.
-            try:
-                stale_client.disconnect()
-            except Exception:
-                pass
-            try:
-                await asyncio.wait_for(stale_client.wait_until("disconnected"), timeout=3.0)
-            except Exception:
-                pass
-            # slixmpp sometimes leaves the XML parser/transport half-open.
-            # Explicitly abort the transport so the reconnect can proceed.
-            try:
-                transport = getattr(stale_client, "transport", None)
-                if transport is not None and hasattr(transport, "close"):
-                    transport.close()
-            except Exception as exc:
-                logger.debug("XMPP: error closing transport: %s", exc)
+
+        try:
+            client.del_event_handler("session_start", self._session_start)
+            client.del_event_handler("message", self._on_message)
+            client.del_event_handler("presence", self._on_presence)
+            client.del_event_handler("exception", self._slixmpp_exception_handler)
+            if hasattr(self, "_current_disconnected_handler"):
+                client.del_event_handler("disconnected", self._current_disconnected_handler)
+            client.del_event_handler("omemo_initialized", self._omemo_initialized)
+        except Exception as exc:
+            logger.debug("XMPP: error removing event handlers during cleanup: %s", exc)
+
+        try:
+            client.disconnect()
+        except Exception:
+            pass
+        try:
+            await asyncio.wait_for(client.wait_until("disconnected"), timeout=3.0)
+        except Exception:
+            pass
+        try:
+            transport = getattr(client, "transport", None)
+            if transport is not None and hasattr(transport, "close"):
+                transport.close()
+        except Exception as exc:
+            logger.debug("XMPP: error closing transport: %s", exc)
 
     # -- Sending -------------------------------------------------------------
 
