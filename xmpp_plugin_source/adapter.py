@@ -127,6 +127,11 @@ class XMPPAdapter(BasePlatformAdapter):
         self._omemo_chats: set[str] = set()
         self._auto_sethome_done = False
 
+        # Outbound messages sent to a bare JID before we know a full resource
+        # (e.g. gateway restart notifications) are queued and flushed once an
+        # inbound message from that JID gives us a usable resource.
+        self._pending_messages: Dict[str, list[str]] = {}
+
         self._inbound_pipeline = InboundPipeline([
             ValidateMiddleware(),
             OMEMODecryptMiddleware(),
@@ -418,6 +423,20 @@ class XMPPAdapter(BasePlatformAdapter):
         # send_voice() directly; send() delivers the matching text response.
         if chat_id_str in self._voice_reply_chats:
             self._voice_reply_chats.discard(chat_id_str)
+
+        # If we do not yet have a resource for this contact and OMEMO is
+        # enabled, queue the message. It will be flushed once an inbound
+        # message arrives with a usable resource. This fixes restart
+        # notifications that are sent before the contact's device list is known.
+        if self.omemo_enabled and not cached_resource:
+            self._pending_messages.setdefault(chat_id_str, []).append(content)
+            logger.info(
+                "XMPP: queued message for %s until a resource is known (pending: %d)",
+                chat_id_str,
+                len(self._pending_messages[chat_id_str]),
+            )
+            return SendResult(success=True)
+
         return await self._send_text(recipient, content)
 
     async def _send_voice_reply_text(self, recipient: JID, text: str) -> SendResult:
@@ -862,6 +881,21 @@ class XMPPAdapter(BasePlatformAdapter):
     async def _on_message(self, msg: Message):
         ctx = InboundContext(adapter=self, msg=msg)
         await self._inbound_pipeline.run(ctx)
+
+        # After handling the inbound message we have a resource for the sender;
+        # flush any messages that were queued before a resource was known.
+        sender_bare = str(JID(msg["from"]).bare) if msg.get("from") else ""
+        if sender_bare:
+            await self._flush_pending_messages(sender_bare)
+
+    def _flush_pending_messages(self, sender_bare: str) -> None:
+        """Send any messages queued for *sender_bare* now that a resource is known."""
+        pending = self._pending_messages.pop(sender_bare, [])
+        if not pending:
+            return
+        logger.info("XMPP: flushing %d pending message(s) to %s", len(pending), sender_bare)
+        for text in pending:
+            asyncio.create_task(self.send(sender_bare, text))
 
     def _build_source(self, sender_bare: str) -> Any:
         from gateway.session import SessionSource
