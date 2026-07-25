@@ -100,7 +100,7 @@ platforms:
     allow_all_users: false
 ```
 
-All install-specific settings (credentials, home channel, and avatar path) are stored in your Hermes `.env` file instead of `config.yaml`:
+All install-specific settings (credentials, home channel, and avatar path) are stored in your Hermes `.env` file:
 
 ```bash
 # ~/.hermes/.env
