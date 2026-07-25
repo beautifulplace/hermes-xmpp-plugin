@@ -3,8 +3,10 @@ import logging
 import mimetypes
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, List, Optional
 
+from gateway.config import Platform
 from gateway.platforms.base import MessageEvent, MessageType
 
 from .media import cache_media, is_aesgcm_url
@@ -196,12 +198,18 @@ class BuildEventMiddleware(Middleware):
                 message_type = MessageType.DOCUMENT
 
         ctx.event = MessageEvent(
-            platform="xmpp",
-            chat_id=ctx.sender_bare,
-            user_id=ctx.sender_bare,
-            message_id=ctx.msg.get("id") or "",
             text=ctx.body,
             message_type=message_type,
+            source=SimpleNamespace(
+                platform=Platform("xmpp"),
+                chat_id=ctx.sender_bare,
+                user_id=ctx.sender_bare,
+                chat_type="dm",
+                message_id=ctx.msg.get("id") or "",
+                thread_id=None,
+                reply_to_message_id=None,
+            ),
+            message_id=ctx.msg.get("id") or "",
             media_urls=ctx.media_urls,
             media_types=ctx.media_types,
             raw_message=ctx.msg,
