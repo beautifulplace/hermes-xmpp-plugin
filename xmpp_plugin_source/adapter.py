@@ -890,7 +890,7 @@ class XMPPAdapter(BasePlatformAdapter):
         if sender_bare:
             await self._flush_pending_messages(sender_bare)
 
-    def _flush_pending_messages(self, sender_bare: str) -> None:
+    async def _flush_pending_messages(self, sender_bare: str) -> None:
         """Send any messages queued for *sender_bare* now that a resource is known."""
         pending = self._pending_messages.pop(sender_bare, [])
         if not pending:
@@ -902,15 +902,15 @@ class XMPPAdapter(BasePlatformAdapter):
             logger.warning("XMPP: cannot flush pending messages to invalid JID %s: %s", sender_bare, exc)
             return
 
-        async def _send_one(text: str) -> None:
-            result = await self._send_text(recipient, text)
-            if result.success:
-                logger.info("XMPP: flushed queued message to %s", sender_bare)
-            else:
-                logger.warning("XMPP: flushed queued message to %s failed: %s", sender_bare, result.error)
-
         for text in pending:
-            asyncio.create_task(_send_one(text))
+            try:
+                result = await self._send_text(recipient, text)
+                if result.success:
+                    logger.info("XMPP: flushed queued message to %s", sender_bare)
+                else:
+                    logger.warning("XMPP: flushed queued message to %s failed: %s", sender_bare, result.error)
+            except Exception as exc:
+                logger.exception("XMPP: flushed queued message to %s raised: %s", sender_bare, exc)
 
     def _build_source(self, sender_bare: str) -> Any:
         from gateway.session import SessionSource
