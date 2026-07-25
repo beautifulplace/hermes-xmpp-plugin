@@ -34,7 +34,7 @@ Run the installer:
 python3 install_xmpp_plugin.py
 ```
 
-You will be prompted for your XMPP JID, password, and an optional avatar path. The installer will:
+You will be prompted for your XMPP JID, password, and an optional avatar path. The installer writes these to your Hermes `.env` file so reinstalls do not require retyping.
 
 1. Copy the plugin to `~/.hermes/plugins/platforms/xmpp/`
 2. Enable it in `config.yaml`
