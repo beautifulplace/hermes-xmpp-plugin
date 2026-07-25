@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from gateway.platforms.base import MessageEvent, MessageType
@@ -269,16 +270,47 @@ class BuildEventMiddleware(InboundMiddleware):
     name = "build-event"
 
     async def handle(self, ctx: InboundContext, next_fn: Callable) -> None:
-        if not ctx.body:
+        if not ctx.body and not ctx.media_path:
             await next_fn()
             return
 
-        msg_type = MessageType.VOICE if ctx.is_voice else MessageType.TEXT
+        from .xmpp_utils import guess_extension_from_data, mime_from_extension
+
+        media_urls: list[str] = []
+        media_types: list[str] = []
+        msg_type = MessageType.TEXT
+
+        if ctx.media_path and ctx.media_path.exists():
+            path_str = str(ctx.media_path)
+            data = ctx.media_path.read_bytes()
+            ext = guess_extension_from_data(data) or Path(ctx.media_path).suffix.lower()
+            mtype = mime_from_extension(ext)
+            media_urls.append(path_str)
+            media_types.append(mtype)
+
+            audio_exts = {".m4a", ".mp4", ".ogg", ".oga", ".opus", ".mp3", ".webm", ".wav"}
+            if ctx.is_voice or ext in audio_exts:
+                msg_type = MessageType.VOICE
+            elif mtype.startswith("image/"):
+                msg_type = MessageType.PHOTO
+            elif mtype.startswith("video/"):
+                msg_type = MessageType.VIDEO
+            else:
+                msg_type = MessageType.DOCUMENT
+
+            # If the body is just the local cache path, replace it with an
+            # empty caption so the gateway fills in a media placeholder.
+            if ctx.body.strip() == path_str:
+                ctx.body = ""
+
+        text = ctx.body or ""
         event = MessageEvent(
-            text=ctx.body,
+            text=text,
             message_type=msg_type,
             source=ctx.adapter._build_source(ctx.sender_bare),
             metadata={"resource": str(ctx.sender_full)},
+            media_urls=media_urls,
+            media_types=media_types,
         )
         ctx.event = event
 
