@@ -89,7 +89,7 @@ Then restart the gateway.
 
 ## Configuration
 
-The installer writes a default `platforms.xmpp` block in `config.yaml`:
+The installer writes a minimal `platforms.xmpp` block in `config.yaml`:
 
 ```yaml
 platforms:
@@ -97,17 +97,17 @@ platforms:
     enabled: true
     omemo_enabled: true
     omemo_allow_untrusted: true
-    avatar_path: "/path/to/avatar.png"
-    home_channel: ""
     allow_all_users: false
 ```
 
-For security, the installer stores the JID and password in your Hermes `.env` file instead of `config.yaml`:
+All install-specific settings (credentials, home channel, and avatar path) are stored in your Hermes `.env` file instead of `config.yaml`:
 
 ```bash
 # ~/.hermes/.env
 XMPP_USER_JID="hermes@example.com"
 XMPP_PASSWORD="your-password"
+XMPP_HOME_CHANNEL="you@example.com"
+XMPP_AVATAR_PATH="/path/to/avatar.png"
 ```
 
 ### Environment variables
