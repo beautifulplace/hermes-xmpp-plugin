@@ -154,12 +154,26 @@ class VoiceDetectMiddleware(InboundMiddleware):
 
 
 class TranscribeVoiceMiddleware(InboundMiddleware):
-    """Transcribe inbound voice messages so the LLM receives text."""
+    """Transcribe inbound voice/audio messages so the LLM receives text."""
 
     name = "transcribe-voice"
 
     async def handle(self, ctx: InboundContext, next_fn: Callable) -> None:
-        if not ctx.is_voice or not ctx.media_path:
+        if not ctx.media_path:
+            await next_fn()
+            return
+
+        # If we downloaded a media file that is actually audio, treat it as
+        # a voice message regardless of the earlier URL heuristic.
+        from .xmpp_utils import guess_extension_from_data
+
+        audio_exts = {".m4a", ".mp4", ".ogg", ".oga", ".opus", ".mp3", ".webm", ".wav"}
+        data = ctx.media_path.read_bytes()
+        detected_ext = guess_extension_from_data(data)
+        if detected_ext in audio_exts:
+            ctx.is_voice = True
+
+        if not ctx.is_voice:
             await next_fn()
             return
 
