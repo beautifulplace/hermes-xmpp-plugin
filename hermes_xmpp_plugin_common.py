@@ -265,7 +265,7 @@ def disable_plugin(config_text: str) -> str:
     return result.rstrip() + "\n"
 
 
-def add_default_xmpp_config(config_text: str, avatar_path: str = "") -> str:
+def add_default_xmpp_config(config_text: str) -> str:
     """Add a default platforms.xmpp block if one does not exist.
 
     Credentials are intentionally NOT written into config.yaml; they are stored
@@ -278,11 +278,10 @@ def add_default_xmpp_config(config_text: str, avatar_path: str = "") -> str:
         if re.search(r"^\s+xmpp:\s*$", block, re.MULTILINE):
             return config_text
 
-        default_xmpp = f"""\n  xmpp:
+        default_xmpp = """\n  xmpp:
     enabled: true
     omemo_enabled: true
     omemo_allow_untrusted: true
-    avatar_path: "{avatar_path}"
     allow_all_users: false
 """
         return re.sub(
@@ -293,12 +292,11 @@ def add_default_xmpp_config(config_text: str, avatar_path: str = "") -> str:
             flags=re.MULTILINE,
         )
 
-    default_block = f"""platforms:
+    default_block = """platforms:
   xmpp:
     enabled: true
     omemo_enabled: true
     omemo_allow_untrusted: true
-    avatar_path: "{avatar_path}"
     allow_all_users: false
 """
     return config_text.rstrip() + "\n\n" + default_block + "\n"
