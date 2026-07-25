@@ -283,7 +283,6 @@ def add_default_xmpp_config(config_text: str, avatar_path: str = "") -> str:
     omemo_enabled: true
     omemo_allow_untrusted: true
     avatar_path: "{avatar_path}"
-    home_channel: ""
     allow_all_users: false
 """
         return re.sub(
@@ -300,7 +299,6 @@ def add_default_xmpp_config(config_text: str, avatar_path: str = "") -> str:
     omemo_enabled: true
     omemo_allow_untrusted: true
     avatar_path: "{avatar_path}"
-    home_channel: ""
     allow_all_users: false
 """
     return config_text.rstrip() + "\n\n" + default_block + "\n"
