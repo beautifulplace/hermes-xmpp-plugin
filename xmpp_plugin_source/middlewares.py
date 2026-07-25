@@ -122,13 +122,15 @@ class MediaResolveMiddleware(InboundMiddleware):
 
     async def handle(self, ctx: InboundContext, next_fn: Callable) -> None:
         from .media import resolve_inbound_media
-        from .xmpp_utils import is_voice_url
+        from .xmpp_utils import extract_url, is_voice_url
 
         if not ctx.body:
             await next_fn()
             return
 
-        kind = "audio" if ctx.is_voice or is_voice_url(ctx.body) else "image"
+        url = extract_url(ctx.body) or ""
+        is_voice = ctx.is_voice or is_voice_url(url, ctx.body)
+        kind = "audio" if is_voice else "image"
         clean_body, path = await resolve_inbound_media(ctx.body, ctx.adapter._http, kind=kind)
         ctx.body = clean_body
         ctx.media_path = path
