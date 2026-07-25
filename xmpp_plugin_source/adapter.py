@@ -212,6 +212,7 @@ class XMPPAdapter(BasePlatformAdapter):
             self.client = ClientXMPP(jid_str, self.password)
             self.client.use_message_ids = True
             self._active_client = self.client
+            self._active_client = self.client
             self.client.register_plugin("xep_0030")
             try:
                 disco = self.client.plugin.get("xep_0030")
@@ -246,7 +247,10 @@ class XMPPAdapter(BasePlatformAdapter):
             self.client.add_event_handler("message", self._on_message)
             self.client.add_event_handler("presence", self._on_presence)
             self.client.add_event_handler("exception", self._slixmpp_exception_handler)
-            self.client.add_event_handler("disconnected", self._on_disconnected)
+            # Per-client disconnect handler: stale clients cannot schedule reconnects
+            # after we have moved on to a new client or initiated shutdown.
+            self._current_disconnected_handler = self._make_disconnected_handler(self.client)
+            self.client.add_event_handler("disconnected", self._current_disconnected_handler)
 
             logger.info("XMPP: connecting as %s to %s:%s ...", self.user_jid, self.server or "(auto)", self.port)
 
@@ -360,16 +364,18 @@ class XMPPAdapter(BasePlatformAdapter):
 
         self._internal_reconnect_task = asyncio.create_task(_reconnect_loop())
 
-    async def _on_disconnected(self, event):
-        logger.warning("XMPP: disconnected event received; event=%s", event)
-        if self._shutting_down:
-            return
-        # Ignore disconnect events from clients we are in the process of replacing
-        if self.client is not self._active_client:
-            logger.debug("XMPP: ignoring disconnected event from stale client")
-            return
-        if self.is_connected:
-            self._schedule_internal_reconnect("disconnected", str(event))
+    def _make_disconnected_handler(self, client: Any):
+        """Return a disconnect handler bound to one specific slixmpp client."""
+        async def handler(event):
+            if self.client is not client:
+                logger.debug("XMPP: ignoring disconnected event from stale client")
+                return
+            logger.warning("XMPP: disconnected event received; event=%s", event)
+            if self._shutting_down:
+                return
+            if self.is_connected:
+                self._schedule_internal_reconnect("disconnected", str(event))
+        return handler
 
     async def disconnect(self) -> None:
         self._shutting_down = True
@@ -400,7 +406,8 @@ class XMPPAdapter(BasePlatformAdapter):
                 self.client.del_event_handler("message", self._on_message)
                 self.client.del_event_handler("presence", self._on_presence)
                 self.client.del_event_handler("exception", self._slixmpp_exception_handler)
-                self.client.del_event_handler("disconnected", self._on_disconnected)
+                if hasattr(self, "_current_disconnected_handler"):
+                    self.client.del_event_handler("disconnected", self._current_disconnected_handler)
                 self.client.del_event_handler("omemo_initialized", self._omemo_initialized)
             except Exception as exc:
                 logger.debug("XMPP: error removing event handlers during cleanup: %s", exc)
@@ -414,6 +421,7 @@ class XMPPAdapter(BasePlatformAdapter):
                 await asyncio.wait_for(self.client.wait_until("disconnected"), timeout=5.0)
             except Exception:
                 pass
+            self._active_client = None
             self.client = None
 
     # -- Sending -------------------------------------------------------------
