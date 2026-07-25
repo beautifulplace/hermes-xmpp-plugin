@@ -106,9 +106,9 @@ async def resolve_inbound_media(
     if data is None:
         return body, None
 
-    ext = guess_extension_from_data(data)
-    if not ext and kind == "audio":
-        ext = guess_audio_extension(url, data)
+    ext = guess_audio_extension(url, data) if kind == "audio" else guess_extension_from_data(data)
+    if not ext:
+        ext = guess_extension_from_data(data)
     if not ext:
         ext = ".bin"
     path = cache_media_path(data, kind=kind, ext=ext)
