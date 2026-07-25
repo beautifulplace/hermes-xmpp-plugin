@@ -118,6 +118,7 @@ class XMPPAdapter(BasePlatformAdapter):
         self._avatar_republish_task: Optional[asyncio.Task] = None
         self._internal_reconnect_task: Optional[asyncio.Task] = None
         self._shutting_down = False
+        self._active_client: Optional[Any] = None
         self._xmpp_background_tasks: set[asyncio.Task] = set()
         self._last_activity: float = 0.0
         self._ping_interval = 30.0
@@ -210,6 +211,7 @@ class XMPPAdapter(BasePlatformAdapter):
 
             self.client = ClientXMPP(jid_str, self.password)
             self.client.use_message_ids = True
+            self._active_client = self.client
             self.client.register_plugin("xep_0030")
             try:
                 disco = self.client.plugin.get("xep_0030")
@@ -362,6 +364,10 @@ class XMPPAdapter(BasePlatformAdapter):
         logger.warning("XMPP: disconnected event received; event=%s", event)
         if self._shutting_down:
             return
+        # Ignore disconnect events from clients we are in the process of replacing
+        if self.client is not self._active_client:
+            logger.debug("XMPP: ignoring disconnected event from stale client")
+            return
         if self.is_connected:
             self._schedule_internal_reconnect("disconnected", str(event))
 
@@ -398,6 +404,8 @@ class XMPPAdapter(BasePlatformAdapter):
                 self.client.del_event_handler("omemo_initialized", self._omemo_initialized)
             except Exception as exc:
                 logger.debug("XMPP: error removing event handlers during cleanup: %s", exc)
+            # Mark this client as stale so any late events are ignored.
+            self._active_client = None
             try:
                 self.client.disconnect()
             except Exception:
