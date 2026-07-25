@@ -176,6 +176,21 @@ def enable_plugin(config_text: str) -> str:
 
     new_plugins_block = "plugins:\n  enabled:\n    - platforms/xmpp\n"
 
+    # If an empty plugins.enabled block exists, fill it instead of duplicating.
+    empty_block_match = re.search(
+        r"^plugins:\s*\n\s+enabled:\s*$",
+        config_text,
+        re.MULTILINE,
+    )
+    if empty_block_match:
+        return re.sub(
+            r"^(plugins:\s*\n\s+enabled:)\s*$",
+            r"\1\n    - platforms/xmpp",
+            config_text,
+            count=1,
+            flags=re.MULTILINE,
+        )
+
     if re.search(r"^platforms:\s*$", config_text, re.MULTILINE):
         # Insert plugins block right before platforms block.
         return re.sub(
@@ -215,7 +230,10 @@ def enable_plugin(config_text: str) -> str:
 
 
 def disable_plugin(config_text: str) -> str:
-    """Remove platforms/xmpp from plugins.enabled."""
+    """Remove platforms/xmpp from plugins.enabled.
+
+    If the enabled list becomes empty, remove the plugins block too.
+    """
     start, end = _find_block_bounds(config_text, "plugins")
     if start < 0:
         return config_text
@@ -231,12 +249,20 @@ def disable_plugin(config_text: str) -> str:
     if len(filtered) == len(lines):
         return config_text
 
-    new_list = "\n".join(filtered) + "\n" if filtered else ""
-    new_block = block.replace(enabled_match.group(1), new_list)
+    # Rebuild the enabled sub-block.
+    if filtered:
+        new_list = "\n".join(filtered) + "\n"
+        new_block = block.replace(enabled_match.group(1), new_list)
+    else:
+        # Drop the entire plugins block if enabled list is now empty.
+        new_block = ""
 
     lines = config_text.splitlines()
     lines[start:end] = new_block.splitlines()
-    return "\n".join(lines) + "\n"
+    result = "\n".join(lines)
+    # Remove any double blank lines left by removing a block.
+    result = re.sub(r"\n\n\n+", "\n\n", result)
+    return result.rstrip() + "\n"
 
 
 def add_default_xmpp_config(config_text: str, avatar_path: str = "") -> str:
@@ -343,7 +369,10 @@ def _ensure_key_in_block(config_text: str, key: str, option: str, value: str) ->
     return "\n".join(lines) + "\n"
 
 def remove_xmpp_config(config_text: str) -> str:
-    """Remove the platforms.xmpp block from config.yaml."""
+    """Remove the platforms.xmpp block from config.yaml.
+
+    If the platforms block is left empty, remove it entirely.
+    """
     start, end = _find_block_bounds(config_text, "platforms")
     if start < 0:
         return config_text
@@ -365,5 +394,13 @@ def remove_xmpp_config(config_text: str) -> str:
                 continue
         new_block.append(line)
 
-    lines[start:end] = new_block
-    return "\n".join(lines) + "\n"
+    # If platforms block only contains the "platforms:" line now, remove it.
+    non_comment = [l for l in new_block if l.strip() and not l.lstrip().startswith("#")]
+    if non_comment == ["platforms:"]:
+        lines[start:end] = []
+    else:
+        lines[start:end] = new_block
+
+    result = "\n".join(lines)
+    result = re.sub(r"\n\n\n+", "\n\n", result)
+    return result.rstrip() + "\n"
