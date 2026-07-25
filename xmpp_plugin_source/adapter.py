@@ -117,6 +117,7 @@ class XMPPAdapter(BasePlatformAdapter):
         self._keepalive_task: Optional[asyncio.Task] = None
         self._avatar_republish_task: Optional[asyncio.Task] = None
         self._internal_reconnect_task: Optional[asyncio.Task] = None
+        self._shutting_down = False
         self._xmpp_background_tasks: set[asyncio.Task] = set()
         self._last_activity: float = 0.0
         self._ping_interval = 30.0
@@ -329,6 +330,8 @@ class XMPPAdapter(BasePlatformAdapter):
                 break
 
     def _schedule_internal_reconnect(self, code: str, message: str) -> None:
+        if self._shutting_down:
+            return
         if self._internal_reconnect_task and not self._internal_reconnect_task.done():
             return
         if not self.is_connected:
@@ -357,10 +360,13 @@ class XMPPAdapter(BasePlatformAdapter):
 
     async def _on_disconnected(self, event):
         logger.warning("XMPP: disconnected event received; event=%s", event)
+        if self._shutting_down:
+            return
         if self.is_connected:
             self._schedule_internal_reconnect("disconnected", str(event))
 
     async def disconnect(self) -> None:
+        self._shutting_down = True
         await self._cleanup_client()
         self._mark_disconnected()
 
@@ -383,6 +389,15 @@ class XMPPAdapter(BasePlatformAdapter):
         self._avatar_republish_task = None
 
         if self.client is not None:
+            try:
+                self.client.del_event_handler("session_start", self._session_start)
+                self.client.del_event_handler("message", self._on_message)
+                self.client.del_event_handler("presence", self._on_presence)
+                self.client.del_event_handler("exception", self._slixmpp_exception_handler)
+                self.client.del_event_handler("disconnected", self._on_disconnected)
+                self.client.del_event_handler("omemo_initialized", self._omemo_initialized)
+            except Exception as exc:
+                logger.debug("XMPP: error removing event handlers during cleanup: %s", exc)
             try:
                 self.client.disconnect()
             except Exception:
