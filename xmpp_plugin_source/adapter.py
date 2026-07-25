@@ -239,6 +239,19 @@ class XMPPAdapter(BasePlatformAdapter):
         # Track bare JIDs that have sent us OMEMO-encrypted messages so replies
         # to those chats are always encrypted rather than falling back to plaintext.
         self._omemo_chats: set[str] = set()
+        # Anti-race typing state: stop_typing sets a cooldown so that stray
+        # refresh ticks from the base adapter's _keep_typing loop (which may
+        # outlive the adapter's own stop_typing call after /new or media sends)
+        # cannot resurrect the composing indicator.
+        self._typing_state: Dict[str, str] = {}
+        self._typing_stop_until: Dict[str, float] = {}
+        # Per-chat background refresh tasks owned by the XMPP adapter.  The base
+        # adapter's _keep_typing loop can get orphaned across /new because the
+        # session guard is swapped and the old task's stop_event is no longer the
+        # one in _active_sessions.  By tracking our own task we can kill it
+        # deterministically from send()/stop_typing() without relying on the base
+        # adapter to cancel it for us.
+        self._typing_refresh_tasks: Dict[str, asyncio.Task] = {}
 
     @property
     def name(self) -> str:
@@ -764,15 +777,12 @@ class XMPPAdapter(BasePlatformAdapter):
                 if encrypted:
                     encrypted.send()
                     logger.info("XMPP: OMEMO voice message sent to %s", recipient.bare)
-                    # Clear composing indicator after delivering the voice message.
-                    await self.stop_typing(str(recipient.bare))
                     return SendResult(success=True)
             except Exception as exc:
                 logger.warning("XMPP: OMEMO voice send failed (%s); falling back", exc)
 
         msg.send()
         logger.info("XMPP: voice message sent to %s", recipient.bare)
-        await self.stop_typing(str(recipient.bare))
         return SendResult(success=True)
 
     async def send_image_file(
@@ -849,14 +859,12 @@ class XMPPAdapter(BasePlatformAdapter):
                 if encrypted:
                     encrypted.send()
                     logger.info("XMPP: OMEMO image sent to %s", recipient.bare)
-                    await self.stop_typing(str(recipient.bare))
                     return SendResult(success=True)
             except Exception as exc:
                 logger.warning("XMPP: OMEMO image send failed (%s); falling back", exc)
 
         msg.send()
         logger.info("XMPP: image sent to %s", recipient.bare)
-        await self.stop_typing(str(recipient.bare))
         return SendResult(success=True)
 
 
@@ -923,15 +931,54 @@ class XMPPAdapter(BasePlatformAdapter):
             logger.debug("XMPP: send_typing skipped (disabled or no client)")
             return
         try:
-            # Use the last known full resource for this chat, otherwise bare JID.
+            # Use the bare JID as the canonical chat key for state tracking.
             recipient_str = self._last_resources.get(chat_id, chat_id)
             recipient = JID(recipient_str)
+            chat_key = str(recipient.bare)
+            now = asyncio.get_event_loop().time()
+            # If we recently stopped typing for this chat, ignore stray refresh
+            # ticks from the base adapter's _keep_typing loop.
+            if self._typing_stop_until.get(chat_key, 0.0) > now:
+                logger.debug("XMPP: send_typing suppressed for %s (cooldown active)", chat_key)
+                return
             msg = self.client.make_message(mto=recipient, mtype="chat")
             msg["chat_state"] = "composing"
             msg.send()
+            self._typing_state[chat_key] = "composing"
             logger.warning("XMPP: typing indicator sent to %s", recipient)
+            # Start a self-owned refresh loop for XEP-0085 chat states.  The base
+            # adapter also keeps its own _keep_typing task, but that task can be
+            # orphaned when the session guard is swapped by /new.  Re-sending
+            # composing from our own loop is harmless because the cooldown in
+            # send_typing() prevents it when we have deliberately stopped.
+            self._ensure_typing_refresh_task(chat_key, recipient)
         except Exception as exc:
             logger.warning("XMPP: typing indicator send failed: %s", exc)
+
+    def _ensure_typing_refresh_task(self, chat_key: str, recipient: JID) -> None:
+        """Start a 2s refresh loop for <composing/> that we can kill locally."""
+        task = self._typing_refresh_tasks.get(chat_key)
+        if task is not None and not task.done():
+            return
+
+        async def _refresh() -> None:
+            try:
+                while True:
+                    await asyncio.sleep(2.0)
+                    try:
+                        await self.send_typing(str(recipient.bare))
+                    except Exception:
+                        break
+            except asyncio.CancelledError:
+                pass
+
+        self._typing_refresh_tasks[chat_key] = asyncio.create_task(_refresh())
+
+    def _cancel_typing_refresh_task(self, chat_key: str) -> None:
+        """Cancel the self-owned composing refresh loop, if running."""
+        task = self._typing_refresh_tasks.pop(chat_key, None)
+        if task is not None and not task.done():
+            task.cancel()
 
     async def stop_typing(self, chat_id: str, metadata=None) -> None:
         if not self.typing_indicator or self.client is None:
@@ -940,9 +987,19 @@ class XMPPAdapter(BasePlatformAdapter):
         try:
             recipient_str = self._last_resources.get(chat_id, chat_id)
             recipient = JID(recipient_str)
+            chat_key = str(recipient.bare)
+            # Kill our own refresh loop first so it cannot resurrect composing
+            # while we are sending the active stanza or right after.
+            self._cancel_typing_refresh_task(chat_key)
             msg = self.client.make_message(mto=recipient, mtype="chat")
             msg["chat_state"] = "active"
             msg.send()
+            self._typing_state[chat_key] = "active"
+            # Cooldown: suppress composing refreshes for 3s after a deliberate stop.
+            # The base adapter's _keep_typing loop refreshes every 2s and may
+            # outlive the stop signal on the /new path, so this prevents the
+            # composing bubble from popping back up.
+            self._typing_stop_until[chat_key] = asyncio.get_event_loop().time() + 3.0
             logger.warning("XMPP: stop typing sent to %s", recipient)
         except Exception as exc:
             logger.warning("XMPP: stop typing send failed: %s", exc)
