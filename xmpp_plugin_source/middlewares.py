@@ -104,6 +104,9 @@ class OMEMODecryptMiddleware(InboundMiddleware):
             if decrypted_body:
                 ctx.body = decrypted_body
                 ctx.is_encrypted = True
+                # Remember that this chat uses OMEMO so all replies are encrypted.
+                if ctx.sender_bare:
+                    ctx.adapter._omemo_chats.add(ctx.sender_bare)
                 logger.info(
                     "XMPP: OMEMO decrypted message from %s: %d chars",
                     ctx.sender_bare,
