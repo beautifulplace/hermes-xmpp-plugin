@@ -130,7 +130,7 @@ class XMPPAdapter(BasePlatformAdapter):
         # Outbound messages sent to a bare JID before we know a full resource
         # (e.g. gateway restart notifications) are queued and flushed once an
         # inbound message from that JID gives us a usable resource.
-        self._pending_messages: Dict[str, list[str]] = {}
+        self._pending_messages: Dict[str, Dict[str, Any]] = {}
 
         self._inbound_pipeline = InboundPipeline([
             ValidateMiddleware(),
@@ -429,11 +429,12 @@ class XMPPAdapter(BasePlatformAdapter):
         # message arrives with a usable resource. This fixes restart
         # notifications that are sent before the contact's device list is known.
         if self.omemo_enabled and not cached_resource:
-            self._pending_messages.setdefault(chat_id_str, []).append(content)
+            entry = self._pending_messages.setdefault(chat_id_str, {"messages": [], "sent_to": set()})
+            entry["messages"].append(content)
             logger.info(
                 "XMPP: queued message for %s until a resource is known (pending: %d)",
                 chat_id_str,
-                len(self._pending_messages[chat_id_str]),
+                len(entry["messages"]),
             )
             return SendResult(success=True)
 
@@ -891,27 +892,42 @@ class XMPPAdapter(BasePlatformAdapter):
             await self._flush_pending_messages(sender_bare)
 
     async def _flush_pending_messages(self, sender_bare: str) -> None:
-        """Send any messages queued for *sender_bare* now that a resource is known."""
-        pending = self._pending_messages.pop(sender_bare, [])
-        if not pending:
+        """Send queued messages to *sender_bare* via the resource that just became known.
+
+        Each pending message is delivered to every resource that checks in after
+        a restart, so notifications reach all active clients (e.g. Gajim + Conversations).
+        """
+        entry = self._pending_messages.get(sender_bare)
+        if entry is None:
             return
-        logger.info("XMPP: flushing %d pending message(s) to %s", len(pending), sender_bare)
+        messages = entry.get("messages", [])
+        if not messages:
+            return
 
-        # Use the specific resource that just sent a message; this is the
-        # device the user is currently active on, so OMEMO will target it
-        # correctly instead of guessing across all (possibly stale) devices.
-        recipient = self._last_resources.get(sender_bare, sender_bare)
-        logger.info("XMPP: flushing queued message(s) via %s", recipient)
+        resource = self._last_resources.get(sender_bare)
+        if not resource:
+            return
 
-        for text in pending:
+        sent_to = entry["sent_to"]
+        if resource in sent_to:
+            return
+        sent_to.add(resource)
+
+        logger.info("XMPP: flushing %d pending message(s) to %s via %s", len(messages), sender_bare, resource)
+        for text in messages:
             try:
-                result = await self.send(recipient, text)
+                result = await self.send(resource, text)
                 if result.success:
-                    logger.info("XMPP: flushed queued message to %s", recipient)
+                    logger.info("XMPP: flushed queued message to %s", resource)
                 else:
-                    logger.warning("XMPP: flushed queued message to %s failed: %s", recipient, result.error)
+                    logger.warning("XMPP: flushed queued message to %s failed: %s", resource, result.error)
             except Exception as exc:
-                logger.exception("XMPP: flushed queued message to %s raised: %s", recipient, exc)
+                logger.exception("XMPP: flushed queued message to %s raised: %s", resource, exc)
+
+        # Stop tracking once we have delivered to a reasonable number of resources
+        # to avoid leaking memory on long-running sessions.
+        if len(sent_to) >= 3:
+            self._pending_messages.pop(sender_bare, None)
 
     def _build_source(self, sender_bare: str) -> Any:
         from gateway.session import SessionSource
