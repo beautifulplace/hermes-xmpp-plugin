@@ -414,12 +414,10 @@ class XMPPAdapter(BasePlatformAdapter):
                 logger.warning("XMPP: could not use cached resource %s: %s", cached_resource, exc)
 
         chat_id_str = str(recipient.bare)
+        # Note: auto-TTS voice replies are handled by the gateway calling
+        # send_voice() directly; send() delivers the matching text response.
         if chat_id_str in self._voice_reply_chats:
             self._voice_reply_chats.discard(chat_id_str)
-            try:
-                return await self._send_voice_reply_text(recipient, content)
-            except Exception as exc:
-                logger.warning("XMPP: TTS voice reply failed (%s); sending text only", exc)
         return await self._send_text(recipient, content)
 
     async def _send_voice_reply_text(self, recipient: JID, text: str) -> SendResult:
