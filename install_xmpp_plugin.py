@@ -45,6 +45,40 @@ DEPENDENCIES: list[tuple[str, str, bool]] = [
     ("slixmpp-omemo", "slixmpp_omemo", True),
 ]
 
+# Voice replies require ffmpeg to convert TTS MP3 output into M4A for
+# Conversations clients. It cannot be installed via pip, so we only check
+# for its presence and warn the user.
+SYSTEM_DEPENDENCIES: dict[str, str] = {
+    "ffmpeg": "converting TTS MP3 output to M4A for voice replies",
+}
+
+
+def _check_system_dependencies() -> None:
+    """Warn if optional/required system binaries are missing."""
+    missing: list[tuple[str, str]] = []
+    for binary, reason in SYSTEM_DEPENDENCIES.items():
+        if shutil.which(binary) is None:
+            missing.append((binary, reason))
+    if not missing:
+        return
+
+    print("\nWARNING: The following system tools are missing:", file=sys.stderr)
+    for binary, reason in missing:
+        print(f"  - {binary}: required for {reason}", file=sys.stderr)
+    print("\nInstall them before using voice replies. Examples:", file=sys.stderr)
+    print("  Debian/Ubuntu/Raspberry Pi OS: sudo apt install ffmpeg", file=sys.stderr)
+    print("  Fedora/RHEL:                   sudo dnf install ffmpeg", file=sys.stderr)
+    print("  Arch Linux:                    sudo pacman -S ffmpeg", file=sys.stderr)
+    print("  macOS:                         brew install ffmpeg", file=sys.stderr)
+    print("\nContinue anyway? [y/N] ", end="", file=sys.stderr)
+    try:
+        answer = input().strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = "n"
+    if answer not in {"y", "yes"}:
+        sys.exit(1)
+
+
 def fail(message: str) -> NoReturn:
     print(f"ERROR: {message}", file=sys.stderr)
     sys.exit(1)
@@ -405,6 +439,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         python,
         plugin_dest,
     )
+    _check_system_dependencies()
 
     if config_path.exists():
         backup_path = backup_file(config_path, ".install-backup")

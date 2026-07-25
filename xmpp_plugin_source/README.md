@@ -2,6 +2,26 @@
 
 XMPP gateway adapter for [Hermes Agent](https://github.com/NousResearch/hermes-agent). Connects to an XMPP server using `slixmpp` and routes messages between XMPP users and the agent, with OMEMO end-to-end encryption enabled by default.
 
+## Requirements
+
+- Python 3.10+
+- A running [Hermes Agent](https://github.com/NousResearch/hermes-agent) gateway
+- An XMPP account for the bot
+- `ffmpeg` (for voice replies; the plugin converts TTS MP3 output to M4A for Conversations)
+  ```bash
+  # Debian/Ubuntu/Raspberry Pi OS
+  sudo apt install ffmpeg
+
+  # Fedora/RHEL
+  sudo dnf install ffmpeg
+
+  # Arch Linux
+  sudo pacman -S ffmpeg
+
+  # macOS
+  brew install ffmpeg
+  ```
+
 ## Enabling the Plugin
 
 User-installed plugins are opt-in. Add the plugin to `plugins.enabled` in `~/.hermes/config.yaml`:
