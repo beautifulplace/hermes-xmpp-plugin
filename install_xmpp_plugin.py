@@ -136,7 +136,6 @@ def install_dependencies(
 def enable_plugin_in_config(
     config_path: Path,
     add_defaults: bool,
-    avatar_path: str = "",
 ) -> None:
     if not config_path.exists():
         print(f"Config not found at {config_path}; creating minimal config")
@@ -147,9 +146,7 @@ def enable_plugin_in_config(
 
     config_text = enable_plugin(config_text)
     if add_defaults:
-        config_text = add_default_xmpp_config(
-            config_text, avatar_path=avatar_path
-        )
+        config_text = add_default_xmpp_config(config_text)
         config_text = add_voice_and_stt_defaults(config_text)
 
     config_path.write_text(config_text)
@@ -256,10 +253,11 @@ def append_env_credentials(
     env_path: Path,
     jid: str,
     password: str,
+    avatar_path: str = "",
 ) -> None:
-    """Append credentials to the Hermes .env file if not already present.
+    """Append credentials and avatar path to the Hermes .env file if not already present.
 
-    Stores XMPP_JID and XMPP_PASSWORD. Never writes secrets to config.yaml.
+    Stores XMPP_JID, XMPP_PASSWORD, and XMPP_AVATAR_PATH. Never writes secrets to config.yaml.
     """
     lines: list[str] = []
     if env_path.exists():
@@ -274,6 +272,8 @@ def append_env_credentials(
         additions.append(f'XMPP_USER_JID="{jid}"')
     if "XMPP_PASSWORD" not in existing_keys:
         additions.append(f'XMPP_PASSWORD="{password}"')
+    if avatar_path and "XMPP_AVATAR_PATH" not in existing_keys:
+        additions.append(f'XMPP_AVATAR_PATH="{avatar_path}"')
 
     if not additions:
         return
@@ -425,7 +425,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
 
     if not args.no_defaults and jid and password:
-        append_env_credentials(env_path, jid, password)
+        append_env_credentials(env_path, jid, password, avatar_path=avatar_path)
         print("  XMPP credentials stored in .env (not config.yaml).")
 
     print("\nInstallation complete.")
