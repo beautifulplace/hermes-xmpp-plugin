@@ -1281,6 +1281,37 @@ class XMPPAdapter(BasePlatformAdapter):
             except Exception:
                 pass
             if not url:
+                # XEP-0363 HTTP File Upload and XEP-0447 Stateless File Sharing
+                # place the URL inside <file-sharing>/<file>/<uri> or
+                # <file-sharing>/<file>/<desc> plus a source <url>. Clients like
+                # Beagle, Dino, or newer versions of Conversations may use these
+                # instead of the older OOB extension.
+                try:
+                    ns_share = "urn:xmpp:share:1"
+                    ns_sshare = "urn:xmpp:sfs:0"
+                    for ns in (ns_sshare, ns_share):
+                        for sfs in msg.xml.findall(f".//{{{ns}}}file-sharing"):
+                            file_el = sfs.find(f"{{{ns}}}file")
+                            if file_el is None:
+                                continue
+                            url_el = file_el.find(f"{{{ns}}}uri") or file_el.find(f"{{{ns}}}url")
+                            if url_el is not None and url_el.text:
+                                url = url_el.text.strip()
+                                break
+                            # Some clients put the URL in a <sources>/<url> child.
+                            sources = file_el.find(f"{{{ns}}}sources") or sfs.find(f"{{{ns}}}sources")
+                            if sources is not None:
+                                for source_url in sources.findall(f".//{{{ns}}}url"):
+                                    if source_url is not None and source_url.text:
+                                        url = source_url.text.strip()
+                                        break
+                            if url:
+                                break
+                        if url:
+                            break
+                except Exception:
+                    pass
+            if not url:
                 url = self._extract_url(body)
 
             media_path: Optional[str] = None
