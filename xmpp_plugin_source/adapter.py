@@ -123,24 +123,29 @@ def _is_voice_url(url: str) -> bool:
     return any(lowered.endswith(ext) for ext in (".ogg", ".oga", ".opus", ".webm"))
 
 
-def _guess_audio_is_voice(url: str, body: str) -> bool:
-    """Heuristic to decide if an incoming audio URL is a voice message."""
+def _guess_audio_is_voice(url: str, body: str, data: Optional[bytes] = None) -> bool:
+    """Heuristic to decide if an incoming audio URL is a voice message.
+
+    A URL must NOT be treated as voice just because it is short or OMEMO-
+    encrypted. OMEMO uses aesgcm:// for images, files, and voice alike, and
+    a bare HTTPS URL is a text link unless it actually points to audio.
+    """
     lowered = url.lower()
-    # aesgcm:// URLs are only used for OMEMO media sharing in XMPP clients,
-    # and audio uploads that way are almost always voice messages.
-    if url.startswith("aesgcm://"):
-        return True
     # Conversations and similar clients often use voice-message-* filenames.
     if "voice-message" in lowered:
         return True
-    # Container formats commonly used for voice messages.
+    # Voice messages are usually short, unadorned clips in these containers.
+    # Generic music/podcast attachments (.m4a, .mp3, .wav) are treated as
+    # regular AUDIO, not VOICE.
     if any(lowered.endswith(ext) for ext in (".ogg", ".oga", ".opus", ".webm")):
         return True
-    # Voice messages are usually sent as standalone media with little or no
-    # accompanying text. If the body is empty or just the URL, assume voice.
+    # If the body is essentially just the URL, only assume voice when we have
+    # downloaded the content and confirmed it is actually audio. Even then,
+    # keep generic audio content as AUDIO; only Ogg/Opus/WebM containers
+    # (handled above) are considered likely voice messages.
     stripped = body.strip()
-    if not stripped or stripped == url or len(stripped) <= len(url) + 10:
-        return True
+    if (stripped == url or not stripped) and data is not None:
+        return _guess_content_type(data).startswith("audio/")
     return False
 
 
@@ -169,6 +174,18 @@ def _guess_audio_extension(url: str, data: bytes) -> str:
         if lowered.endswith(ext):
             return ext
     return ".ogg"
+
+def _is_media_url(url: str) -> bool:
+    """Return True if the URL path has a known media file extension."""
+    lowered = url.lower()
+    return any(lowered.endswith(ext) for ext in (
+        ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".ico",
+        ".mp3", ".m4a", ".ogg", ".oga", ".opus", ".wav", ".webm",
+        ".mp4", ".mov", ".mkv", ".avi",
+        ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+        ".zip", ".tar", ".gz", ".tgz", ".bz2", ".7z",
+    ))
+
 
 class XMPPAdapter(BasePlatformAdapter):
     """
@@ -217,6 +234,10 @@ class XMPPAdapter(BasePlatformAdapter):
         self.typing_indicator = _parse_bool(
             os.getenv("XMPP_TYPING_INDICATOR") or extra.get("typing_indicator"), True
         )
+        # XEP-0085 typing indicators are always enabled; do not allow config
+        # to disable them. This also prevents an accidental null/false value
+        # in config.yaml from breaking the composing indicator.
+        self.typing_indicator = True
         self.avatar_path = os.getenv("XMPP_AVATAR_PATH") or extra.get("avatar_path", "")
         self.home_channel = os.getenv("XMPP_HOME_CHANNEL") or extra.get("home_channel", "")
 
@@ -504,8 +525,12 @@ class XMPPAdapter(BasePlatformAdapter):
 
     async def _on_disconnected(self, event):
         logger.warning("XMPP: disconnected event received; event=%s", event)
-        if self.is_connected:
-            self._schedule_internal_reconnect("disconnected", "XMPP stream disconnected")
+        self._mark_disconnected()
+        # Do not schedule reconnect if we are already trying, or if the
+        # disconnect was caused by a deliberate shutdown/cleanup.
+        if self.client is None:
+            return
+        self._schedule_internal_reconnect("disconnected", "XMPP stream disconnected")
 
     async def _on_stream_negotiated(self, event):
         logger.info("XMPP: stream_negotiated event received")
@@ -697,7 +722,6 @@ class XMPPAdapter(BasePlatformAdapter):
             # Send a final standalone <active/> chat-state notification.
             # This clears any lingering composing indicator in clients that do
             # not observe the encrypted chat-state in the message(s) above.
-            await self.stop_typing(str(recipient.bare))
             return SendResult(success=True)
         except Exception as exc:
             logger.exception("XMPP: failed to send message to %s: %s", recipient.bare, exc)
@@ -957,9 +981,12 @@ class XMPPAdapter(BasePlatformAdapter):
             return
         try:
             # Use the bare JID as the canonical chat key for state tracking.
+            # Send chat-state notifications to the bare JID so every resource
+            # (phone, desktop, web) sees the composing indicator.
             recipient_str = self._last_resources.get(chat_id, chat_id)
-            recipient = JID(recipient_str)
-            chat_key = str(recipient.bare)
+            recipient_full = JID(recipient_str)
+            recipient_bare = JID(recipient_full.bare)
+            chat_key = str(recipient_bare)
             now = asyncio.get_event_loop().time()
             # If we recently stopped typing for this chat, ignore stray refresh
             # ticks from any orphaned loop.
@@ -970,15 +997,15 @@ class XMPPAdapter(BasePlatformAdapter):
             if self._typing_state.get(chat_key) == "active":
                 logger.debug("XMPP: send_typing suppressed for %s (state is active)", chat_key)
                 return
-            msg = self.client.make_message(mto=recipient, mtype="chat")
+            msg = self.client.make_message(mto=recipient_bare, mtype="chat")
             msg["chat_state"] = "composing"
             msg.send()
             self._typing_state[chat_key] = "composing"
-            logger.warning("XMPP: typing indicator sent to %s", recipient)
+            logger.warning("XMPP: typing indicator sent to %s", recipient_bare)
             # Start a self-owned refresh loop for XEP-0085 chat states.  This is
             # the only refresh loop we rely on; the base adapter's generic loop
             # is overridden above to a single send + this refresh.
-            self._ensure_typing_refresh_task(chat_key, recipient)
+            self._ensure_typing_refresh_task(chat_key, recipient_bare)
         except Exception as exc:
             logger.warning("XMPP: typing indicator send failed: %s", exc)
 
@@ -1036,10 +1063,24 @@ class XMPPAdapter(BasePlatformAdapter):
         except Exception as exc:
             logger.warning("XMPP: stop typing send failed: %s", exc)
 
+    async def edit_message(
+        self,
+        chat_id: str,
+        message_id: str,
+        content: str,
+        *,
+        finalize: bool = False,
+    ) -> SendResult:
+        """XMPP does not support message editing.
+
+        Returning ``success=False`` lets the gateway fall back to sending each
+        tool-progress update as a separate message, so XMPP behaves like
+        Mattermost for live tool status.
+        """
+        return SendResult(success=False, error="not supported")
+
     async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
         return {"name": chat_id, "type": "dm"}
-
-    # -- Media ---------------------------------------------------------------
 
     async def _download_url(self, url: str) -> Optional[bytes]:
         try:
@@ -1246,37 +1287,41 @@ class XMPPAdapter(BasePlatformAdapter):
             original_msg_type = MessageType.TEXT
             if url:
                 logger.debug("XMPP: detected URL in message: %s", url)
-                if url.startswith("aesgcm://"):
-                    data = await self._download_aesgcm(url)
-                else:
-                    data = await self._download_url(url)
-                logger.debug("XMPP: downloaded %d bytes from %s", len(data) if data else 0, url)
-                if data:
-                    content_type = _guess_content_type(data)
-                    if content_type.startswith("image/"):
-                        msg_type = MessageType.PHOTO
-                        ext = _guess_extension_from_data(data)
-                        media_path = self._cache_media(data, "image", ext=ext)
-                    elif content_type.startswith("audio/"):
-                        if _guess_audio_is_voice(url, body):
-                            msg_type = MessageType.VOICE
-                        else:
-                            msg_type = MessageType.AUDIO
-                        ext = _guess_audio_extension(url, data)
-                        media_path = self._cache_media(data, "audio", ext=ext)
-                    elif _guess_audio_is_voice(url, body):
-                        msg_type = MessageType.VOICE
-                        ext = _guess_audio_extension(url, data)
-                        media_path = self._cache_media(data, "audio", ext=ext)
-                    elif _is_audio_url(url):
-                        msg_type = MessageType.AUDIO
-                        ext = _guess_audio_extension(url, data)
-                        media_path = self._cache_media(data, "audio", ext=ext)
+                if url.startswith("aesgcm://") or _is_media_url(url):
+                    if url.startswith("aesgcm://"):
+                        data = await self._download_aesgcm(url)
                     else:
-                        msg_type = MessageType.PHOTO
-                        media_path = self._cache_media(data, "image")
+                        data = await self._download_url(url)
+                    logger.debug("XMPP: downloaded %d bytes from %s", len(data) if data else 0, url)
+                    if data:
+                        content_type = _guess_content_type(data)
+                        if content_type.startswith("image/"):
+                            msg_type = MessageType.PHOTO
+                            ext = _guess_extension_from_data(data)
+                            media_path = self._cache_media(data, "image", ext=ext)
+                        elif content_type.startswith("audio/"):
+                            if _guess_audio_is_voice(url, body, data):
+                                msg_type = MessageType.VOICE
+                            else:
+                                msg_type = MessageType.AUDIO
+                            ext = _guess_audio_extension(url, data)
+                            media_path = self._cache_media(data, "audio", ext=ext)
+                        elif _is_audio_url(url):
+                            # URL claims to be audio but content could not be sniffed;
+                            # trust the URL extension and treat as plain audio.
+                            msg_type = MessageType.AUDIO
+                            ext = _guess_audio_extension(url, data)
+                            media_path = self._cache_media(data, "audio", ext=ext)
+                        else:
+                            # Fallback for any other downloaded binary blob.
+                            msg_type = MessageType.PHOTO
+                            media_path = self._cache_media(data, "image")
+                    else:
+                        logger.warning("XMPP: failed to download media from %s", url)
+                        msg_type = MessageType.TEXT
                 else:
-                    logger.warning("XMPP: failed to download media from %s", url)
+                    # Plain hyperlink, not media; leave as text.
+                    logger.debug("XMPP: treating URL as text link: %s", url)
                     msg_type = MessageType.TEXT
 
                 # Remember that this was a voice message before we convert it to TEXT
