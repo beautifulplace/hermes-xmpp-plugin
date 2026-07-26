@@ -602,7 +602,8 @@ class XMPPAdapter(BasePlatformAdapter):
 
         text = content
         recipient_bare = str(recipient.bare)
-        if recipient_bare in self._voice_reply_chats:
+        is_tool_progress = content.startswith("💻 Running ") or content.startswith("⚠️ ")
+        if recipient_bare in self._voice_reply_chats and not is_tool_progress:
             self._voice_reply_chats.discard(recipient_bare)
             try:
                 return await self._send_voice_reply_text(recipient, text)
