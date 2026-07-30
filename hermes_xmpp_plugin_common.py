@@ -319,8 +319,8 @@ def add_voice_and_stt_defaults(config_text: str) -> str:
     config_text = _ensure_block(config_text, "tts", "provider: edge\n  use_gateway: false")
     config_text = _ensure_key_in_block(config_text, "tts", "provider", "edge")
 
-    config_text = _ensure_block(config_text, "voice", "auto_tts: true")
-    config_text = _ensure_key_in_block(config_text, "voice", "auto_tts", "true")
+    config_text = _ensure_block(config_text, "voice", "auto_tts: false")
+    config_text = _ensure_key_in_block(config_text, "voice", "auto_tts", "false")
 
     return config_text
 

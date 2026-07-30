@@ -436,7 +436,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     print("    local:")
     print("      model: tiny")
     print("  voice:")
-    print("    auto_tts: true")
+    print("    auto_tts: false")
     print("  tts:")
     print("    provider: edge")
     print("Restart the Hermes gateway to load the plugin:")

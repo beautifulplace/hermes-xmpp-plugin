@@ -98,7 +98,7 @@ def test_add_default_xmpp_config_existing_platforms():
 def test_add_voice_and_stt_defaults():
     result = add_voice_and_stt_defaults("")
     assert "voice:" in result
-    assert "auto_tts: true" in result
+    assert "auto_tts: false" in result
     assert "tts:" in result
     assert "provider: edge" in result
     assert "stt:" in result
@@ -107,10 +107,10 @@ def test_add_voice_and_stt_defaults():
 
 
 def test_add_voice_and_stt_defaults_preserves_existing():
-    config = "voice:\n  auto_tts: false\n"
+    config = "voice:\n  auto_tts: true\n"
     result = add_voice_and_stt_defaults(config)
-    assert "auto_tts: false" in result
-    assert "auto_tts: true" not in result
+    assert "auto_tts: true" in result
+    assert "auto_tts: false" not in result
 
 
 def test_add_voice_and_stt_defaults_fills_missing_provider_keys():
@@ -128,5 +128,5 @@ stt:
     assert "stt.provider: local" not in result  # not dotted
     assert "tts:\n  provider: edge\n  use_gateway: false" in result
     assert "stt:\n  provider: local\n  enabled: true" in result
-    assert "voice:\n  auto_tts: true" in result
+    assert "voice:\n  auto_tts: false" in result
     assert result.count("provider:") == 2
