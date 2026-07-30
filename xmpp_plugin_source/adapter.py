@@ -1423,16 +1423,15 @@ class XMPPAdapter(BasePlatformAdapter):
 
             logger.warning("XMPP: about to handle_message event text=%r type=%s", display_text, msg_type)
 
-            # If the global voice.auto_tts default is on, opt this DM chat into
-            # auto-TTS replies. Without this, _should_send_voice_reply stays off
-            # because XMPP has no /voice command UI to set per-chat voice mode.
-            auto_tts_default = getattr(self, "_auto_tts_default", False)
-            if auto_tts_default and original_msg_type == MessageType.VOICE:
+            # If the inbound message was a voice message, opt this DM chat into
+            # the adapter-level voice reply queue so we reply with TTS audio plus
+            # the full text response. This is independent of the global
+            # voice.auto_tts setting, which controls auto-TTS for *all* replies.
+            if original_msg_type == MessageType.VOICE:
                 self._voice_reply_chats.add(sender_bare)
                 logger.info(
-                    "XMPP: queued voice reply for chat %s (auto_tts_default=%s)",
+                    "XMPP: queued voice reply for chat %s (voice input)",
                     sender_bare,
-                    auto_tts_default,
                 )
 
             await self.handle_message(event)
