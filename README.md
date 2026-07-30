@@ -124,7 +124,7 @@ Every `platforms.xmpp` option can also be set via an environment variable:
 | `XMPP_HOME_CHANNEL` | Default JID for cron / notifications |
 | `XMPP_ALLOW_ALL_USERS` | Allow any user to message the bot (default: false) |
 
-## Voice and audio
+## Voice and Audio
 
 The installer sets up the default voice and audio configuration automatically:
 
@@ -136,16 +136,18 @@ stt:
     model: tiny
 
 voice:
-  auto_tts: true
+  auto_tts: false
 
 tts:
   provider: edge
   use_gateway: false
 ```
 
-With this default, the adapter transcribes inbound voice messages using Hermes core STT (`faster-whisper`) and replies with both a TTS voice message and the full text response. Generated audio is uploaded with `aesgcm://` OMEMO media-sharing metadata so it plays inline in supporting clients.
+With this default, the adapter transcribes inbound voice messages using Hermes core STT (`faster-whisper`) and replies with both a TTS voice message and the full text response. Text messages receive text-only replies.
 
-You can change the STT model or TTS provider by editing the corresponding blocks in `~/.hermes/config.yaml`.
+If you change `voice.auto_tts` to `true`, **every** reply (voice or text input) will be sent as a TTS voice message in addition to the text response. The adapter-level voice reply to inbound voice messages is independent of this setting.
+
+You can change the STT model or TTS provider by editing the corresponding blocks in `~/.hermes/config.yaml`. Existing settings are never overwritten by the installer.
 
 ## Uninstallation
 
