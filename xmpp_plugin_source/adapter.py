@@ -253,9 +253,13 @@ class XMPPAdapter(BasePlatformAdapter):
         self._ping_timeout = 10.0
 
         # Track chats where the last inbound message was a voice message so we
-        # can reply with TTS audio when voice.auto_tts is enabled and the gateway
-        # uses the streaming response path (which skips base-adapter auto-TTS).
-        self._voice_reply_chats: set[str] = set()
+        # can reply with TTS audio at the end of the agent turn, not on the first
+        # intermediate message. The simple "next non-tool message wins" approach
+        # caused short acknowledgments to steal the voice reply before the real
+        # response was ready.
+        self._voice_reply_chats: Dict[str, Dict[str, Any]] = {}
+        self._voice_reply_debounce_task: Optional[asyncio.Task] = None
+        self._voice_reply_debounce_delay: float = 2.0
         self._last_resources: Dict[str, str] = {}
         # Track bare JIDs that have sent us OMEMO-encrypted messages so replies
         # to those chats are always encrypted rather than falling back to plaintext.
@@ -603,29 +607,59 @@ class XMPPAdapter(BasePlatformAdapter):
         text = content
         recipient_bare = str(recipient.bare)
         is_tool_progress = content.startswith("💻 Running ") or content.startswith("⚠️ ")
-        if recipient_bare in self._voice_reply_chats and not is_tool_progress:
-            self._voice_reply_chats.discard(recipient_bare)
-            try:
-                return await self._send_voice_reply_text(recipient, text)
-            except Exception as exc:
-                logger.warning("XMPP: TTS voice reply failed (%s); sending text only", exc)
+
+        # If this chat has a pending voice reply, update the buffered text
+        # instead of sending immediately. Tool progress messages are ignored;
+        # every other message restarts the debounce timer so the voice reply
+        # fires only after the agent turn has settled.
+        if recipient_bare in self._voice_reply_chats:
+            if is_tool_progress:
+                return await self._send_text(recipient, text)
+            self._voice_reply_chats[recipient_bare]["text"] = text
+            self._schedule_voice_reply(recipient_bare, recipient)
+            return await self._send_text(recipient, text)
+
         return await self._send_text(recipient, text)
+
+    def _schedule_voice_reply(self, recipient_bare: str, recipient: JID) -> None:
+        """Restart the debounce timer for a pending voice reply."""
+        if self._voice_reply_debounce_task is not None:
+            self._voice_reply_debounce_task.cancel()
+            self._voice_reply_debounce_task = None
+
+        async def _debounced_send() -> None:
+            try:
+                await asyncio.sleep(self._voice_reply_debounce_delay)
+            except asyncio.CancelledError:
+                return
+            pending = self._voice_reply_chats.pop(recipient_bare, None)
+            self._voice_reply_debounce_task = None
+            if pending is None or not pending.get("text"):
+                return
+            try:
+                await self._send_voice_reply_text(recipient, pending["text"])
+            except Exception as exc:
+                logger.warning("XMPP: TTS voice reply failed (%s); text already sent", exc)
+
+        self._voice_reply_debounce_task = asyncio.create_task(_debounced_send())
 
     async def _send_voice_reply_text(self, recipient: JID, text: str) -> SendResult:
         """Generate TTS audio for the first chunk of text and send as a voice message.
 
-        Falls back to plain text if TTS generation fails.
+        The full text response has already been delivered by send(); this only
+        adds the audio reply. Falls back to doing nothing if TTS fails.
         """
         from tools.tts_tool import check_tts_requirements, text_to_speech_tool
 
         if not check_tts_requirements():
-            logger.warning("XMPP: TTS requirements not met; sending text only")
-            return await self._send_text(recipient, text)
+            logger.warning("XMPP: TTS requirements not met; skipping voice reply")
+            return SendResult(success=False, error="TTS requirements not met")
 
         # Only TTS the first chunk; XMPP voice messages are short.
         tts_text = self.prepare_tts_text(text[:4000])
         if not tts_text:
-            return await self._send_text(recipient, text)
+            logger.warning("XMPP: no TTS text after cleanup; skipping voice reply")
+            return SendResult(success=False, error="empty TTS text")
 
         import json as _json
         tts_result_str = await asyncio.to_thread(text_to_speech_tool, text=tts_text)
@@ -639,13 +673,10 @@ class XMPPAdapter(BasePlatformAdapter):
                 os.remove(audio_path)
             except OSError:
                 pass
-            if voice_result.success:
-                # Also send the full text response as a follow-up message.
-                await self._send_text(recipient, text)
-                return voice_result
+            return voice_result
 
-        logger.warning("XMPP: TTS audio generation failed or empty; sending text only")
-        return await self._send_text(recipient, text)
+        logger.warning("XMPP: TTS audio generation failed or empty; skipping voice reply")
+        return SendResult(success=False, error="TTS audio generation failed")
 
     async def _send_text(self, recipient: JID, text: str) -> SendResult:
         logger.warning("XMPP: _send_text() called for %s: %d chars omemo_chats=%s", recipient.bare, len(text), self._omemo_chats)
@@ -1383,7 +1414,7 @@ class XMPPAdapter(BasePlatformAdapter):
                             # Convert to TEXT after successful transcription so the
                             # gateway core doesn't also generate an auto-TTS reply.
                             # The adapter-level _voice_reply_chats queue handles the
-                            # single outbound voice reply below.
+                            # single outbound voice reply at turn end.
                             msg_type = MessageType.TEXT
                         else:
                             error = result.get("error", "unknown error")
@@ -1428,7 +1459,7 @@ class XMPPAdapter(BasePlatformAdapter):
             # the full text response. This is independent of the global
             # voice.auto_tts setting, which controls auto-TTS for *all* replies.
             if original_msg_type == MessageType.VOICE:
-                self._voice_reply_chats.add(sender_bare)
+                self._voice_reply_chats[sender_bare] = {"text": ""}
                 logger.info(
                     "XMPP: queued voice reply for chat %s (voice input)",
                     sender_bare,
