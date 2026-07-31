@@ -196,6 +196,35 @@ def _set_config_value(
     return config_text.rstrip() + "\n"
 
 
+def validate_avatar_path(path: str) -> tuple[bool, str]:
+    """Return (ok, message) for a proposed avatar path."""
+    if not path:
+        return True, ""
+    p = Path(path).expanduser()
+    if not p.exists():
+        return False, f"Avatar path does not exist: {p}"
+    if not p.is_file():
+        return False, f"Avatar path is not a file: {p}"
+    return True, ""
+
+
+def prompt_for_avatar(avatar_path: str) -> str:
+    """Validate and optionally re-prompt for an avatar path."""
+    ok, msg = validate_avatar_path(avatar_path)
+    if ok:
+        return avatar_path
+
+    print(f"\nWARNING: {msg}")
+    while True:
+        new_path = input("Enter a valid avatar file path (or leave blank for none): ").strip()
+        if not new_path:
+            return ""
+        ok, msg = validate_avatar_path(new_path)
+        if ok:
+            return new_path
+        print(f"WARNING: {msg}")
+
+
 def prompt_xmpp_credentials(
     args: argparse.Namespace,
     env_path: Path,
@@ -245,6 +274,8 @@ def prompt_xmpp_credentials(
             "square and resize to 480x480."
         )
         avatar_path = input("Avatar file path (leave blank for none): ").strip()
+
+    avatar_path = prompt_for_avatar(avatar_path)
 
     return jid, password, avatar_path
 
@@ -405,6 +436,9 @@ def main(argv: Optional[list[str]] = None) -> int:
             jid = args.jid
             password = args.password
             avatar_path = args.avatar_path or ""
+            ok, msg = validate_avatar_path(avatar_path)
+            if avatar_path and not ok:
+                fail(msg)
         else:
             jid, password, avatar_path = prompt_xmpp_credentials(args, env_path)
 
@@ -421,7 +455,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     enable_plugin_in_config(
         config_path,
         add_defaults=not args.no_defaults,
-        avatar_path=avatar_path,
     )
 
     if not args.no_defaults and jid and password:
