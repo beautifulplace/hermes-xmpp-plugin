@@ -606,7 +606,7 @@ class XMPPAdapter(BasePlatformAdapter):
 
         text = content
         recipient_bare = str(recipient.bare)
-        is_tool_progress = content.startswith("💻 Running ") or content.startswith("⚠️ ")
+        is_tool_progress = self._is_tool_progress_message(content)
 
         # If this chat has a pending voice reply, update the buffered text
         # instead of sending immediately. Tool progress messages are ignored;
@@ -620,6 +620,25 @@ class XMPPAdapter(BasePlatformAdapter):
             return await self._send_text(recipient, text)
 
         return await self._send_text(recipient, text)
+
+    @staticmethod
+    def _is_tool_progress_message(content: str) -> bool:
+        """Return True if the message is a gateway tool-progress indicator.
+
+        Tool progress messages are ephemeral updates like "💻 Running...",
+        "📖 Reading...", or "🐍 Running code..." that should not consume the
+        pending voice reply. They typically start with an emoji and a verb
+        such as "Running" or "Reading".
+        """
+        if content.startswith("⚠️ "):
+            return True
+        # Heuristic: starts with a non-word/non-space character (emoji) and
+        # contains a tool-progress verb near the beginning.
+        if content and not content[0].isalnum() and not content[0].isspace():
+            head = content[:60].lower()
+            if "running" in head or "reading" in head or "executing" in head:
+                return True
+        return False
 
     def _schedule_voice_reply(self, recipient_bare: str, recipient: JID) -> None:
         """Restart the debounce timer for a pending voice reply."""
