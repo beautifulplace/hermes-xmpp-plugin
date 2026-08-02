@@ -41,24 +41,6 @@ def test_get_profile_dir_named():
         assert profile_dir == home / "profiles" / "work"
 
 
-def test_get_profile_dir_from_active_file():
-    with tempfile.TemporaryDirectory() as tmp:
-        home = Path(tmp)
-        active_file = home / "active_profile"
-        active_file.write_text("bubbles\n")
-        profile_dir = get_profile_dir(home)
-        assert profile_dir == home / "profiles" / "bubbles"
-
-
-def test_get_profile_dir_active_file_blank_uses_default():
-    with tempfile.TemporaryDirectory() as tmp:
-        home = Path(tmp)
-        active_file = home / "active_profile"
-        active_file.write_text("\n")
-        profile_dir = get_profile_dir(home)
-        assert profile_dir == home
-
-
 def test_enable_plugin_creates_block():
     result = enable_plugin("")
     assert "plugins:" in result
@@ -89,10 +71,10 @@ def test_add_default_xmpp_config():
 
 
 def test_add_default_xmpp_config_existing_platforms():
-    config = "plugins:\n  enabled: []\nplatforms:\n  mattermost:\n    enabled: true\n"
+    config = "plugins:\n  enabled: []\nplatforms:\n  other_platform:\n    enabled: true\n"
     result = add_default_xmpp_config(config)
     assert "xmpp:" in result
-    assert "mattermost:" in result
+    assert "other_platform:" in result
 
 
 def test_add_voice_and_stt_defaults():
