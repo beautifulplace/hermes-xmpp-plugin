@@ -72,7 +72,7 @@ For CI or headless setups, pass `--non-interactive` with `--jid` and `--password
 python3 install_xmpp_plugin.py \
   --non-interactive \
   --jid "hermes@example.com" \
-  --password "your-password"
+  --password "hermes-password"
 ```
 
 ### Disable OMEMO encryption
@@ -105,7 +105,7 @@ All install-specific settings (credentials, home channel, and avatar path) are s
 ```bash
 # ~/.hermes/.env
 XMPP_USER_JID="hermes@example.com"
-XMPP_PASSWORD="your-password"
+XMPP_PASSWORD="hermes-password"
 XMPP_HOME_CHANNEL="you@example.com"
 XMPP_AVATAR_PATH="/path/to/avatar.png"
 ```

@@ -53,7 +53,7 @@ For security, the installer stores the JID and password in your Hermes `.env` fi
 ```bash
 # ~/.hermes/.env
 XMPP_USER_JID="hermes@example.com"
-XMPP_PASSWORD="your-password"
+XMPP_PASSWORD="hermes-password"
 ```
 
 ### Environment variables
