@@ -712,10 +712,10 @@ class XMPPAdapter(BasePlatformAdapter):
                 msg = self.client.make_message(mto=recipient, mtype="chat")
                 msg["body"] = chunk
                 msg["id"] = self.client.new_id()
-                # Chat states are advisory; some clients (Gajim) do not reliably
-                # extract an <active/> tag from inside an OMEMO-encrypted
-                # payload, so we follow up with a standalone unencrypted
-                # <active/> stanza after all chunks below.
+                # NOTE: no chat-state is set on the outgoing chunks here, and no
+                # trailing <active/> stanza is sent. If a client shows a stuck
+                # "composing" indicator, that is a known gap (see the follow-up
+                # comment at the end of this method).
 
                 omemo = self._omemo_plugin()
                 if omemo is not None and self.omemo_enabled:
@@ -770,9 +770,13 @@ class XMPPAdapter(BasePlatformAdapter):
                 if i < len(chunks) - 1:
                     await asyncio.sleep(0.2)
 
-            # Send a final standalone <active/> chat-state notification.
-            # This clears any lingering composing indicator in clients that do
-            # not observe the encrypted chat-state in the message(s) above.
+            # NOTE: no standalone <active/> chat-state stanza is sent after the
+            # chunks, and the chunks above do not set msg["chat_state"] either.
+            # This is a known gap: some clients (e.g. Gajim) do not treat a plain
+            # message as an implicit transition to "active" and can keep showing
+            # a composing indicator. If that is observed, set
+            # msg["chat_state"] = "active" on each chunk and/or send a trailing
+            # <active/> stanza here.
             return SendResult(success=True)
         except Exception as exc:
             logger.exception("XMPP: failed to send message to %s: %s", recipient.bare, exc)
