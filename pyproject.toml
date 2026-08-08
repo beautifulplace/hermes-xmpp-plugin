@@ -42,8 +42,8 @@ all = ["slixmpp-omemo", "edge-tts"]
 [project.urls]
 Homepage = "https://github.com/NousResearch/hermes-agent"
 Documentation = "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/"
-Repository = "https://github.com/NousResearch/hermes-xmpp-plugin"
-Issues = "https://github.com/NousResearch/hermes-xmpp-plugin/issues"
+Repository = "https://github.com/beautifulplace/hermes-xmpp-plugin"
+Issues = "https://github.com/beautifulplace/hermes-xmpp-plugin/issues"
 
 [project.scripts]
 install-hermes-xmpp-plugin = "install_xmpp_plugin:main"
