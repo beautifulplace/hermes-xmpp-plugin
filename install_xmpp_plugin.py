@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import getpass
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -156,44 +155,6 @@ def enable_plugin_in_config(
 # but the installer no longer uses them.
 def _ensure_stt_config(config_text: str, model: str) -> str:
     return config_text
-
-
-def _set_config_value(
-    config_text: str,
-    top_key: str,
-    sub_key: str,
-    option: str,
-    value: str,
-) -> str:
-    """Set a scalar value inside a nested block using regex (no YAML lib required)."""
-    lines = config_text.splitlines()
-    in_top = False
-    in_sub = False
-    sub_indent = -1
-    for i, line in enumerate(lines):
-        stripped = line.lstrip()
-        if not in_top:
-            if re.match(rf"^{top_key}:\s*$", stripped):
-                in_top = True
-            continue
-        # Inside top block; detect sub_key at top+2 indent.
-        if in_sub:
-            # End of sub-block if indent drops below sub_indent.
-            if stripped and line.startswith(" ") and len(line) - len(stripped) < sub_indent:
-                in_sub = False
-                continue
-            # Match option line at sub_indent + 2 spaces.
-            opt_match = re.match(rf"^ {{{sub_indent + 2}}}{option}:\s*(.*)$", line)
-            if opt_match:
-                lines[i] = f"{' ' * (sub_indent + 2)}{option}: {value}"
-                return "\n".join(lines) + "\n"
-        else:
-            match = re.match(rf"^  {sub_key}:\s*$", stripped)
-            if match:
-                in_sub = True
-                sub_indent = len(line) - len(stripped)
-    # Not found: append to sub_key block if it exists, else append whole block.
-    return config_text.rstrip() + "\n"
 
 
 def validate_avatar_path(path: str) -> tuple[bool, str]:

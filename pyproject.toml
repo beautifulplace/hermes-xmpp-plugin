@@ -32,12 +32,8 @@ dependencies = [
     "httpx",
     "Pillow",
     "cryptography",
+    "slixmpp-omemo",
 ]
-
-[project.optional-dependencies]
-omemo = ["slixmpp-omemo"]
-voice = ["edge-tts"]
-all = ["slixmpp-omemo", "edge-tts"]
 
 [project.urls]
 Homepage = "https://github.com/NousResearch/hermes-agent"
