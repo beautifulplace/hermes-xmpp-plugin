@@ -179,6 +179,6 @@ python3 -m pytest
 
 ## License
 
-MIT License — see [LICENSE](LICENSE).
+MIT License - see [LICENSE](LICENSE).
 
 Copyright (c) 2026 beautifulplace and contributors.
