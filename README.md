@@ -181,4 +181,4 @@ python3 -m pytest
 
 MIT License - see [LICENSE](LICENSE).
 
-Copyright (c) 2026 beautifulplace and contributors.
+Copyright (c) 2026 beautifulplace.
