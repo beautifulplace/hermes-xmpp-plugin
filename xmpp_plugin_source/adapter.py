@@ -423,7 +423,7 @@ class XMPPAdapter(BasePlatformAdapter):
             asyncio.create_task(self._finish_setup())
             return True
         except Exception as e:
-            logger.error("XMPP: failed to connect as %s — %s", self.user_jid, e)
+            logger.error("XMPP: failed to connect as %s - %s", self.user_jid, e)
             self._set_fatal_error("connect_failed", str(e), retryable=True)
             return False
 
@@ -1268,13 +1268,13 @@ class XMPPAdapter(BasePlatformAdapter):
             logger.warning("XMPP: _on_message fired type=%s from=%s", msg.get("type", ""), msg["from"])
             sender_jid = msg["from"]
             if not sender_jid:
-                logger.warning("XMPP: _on_message returning — no sender_jid")
+                logger.warning("XMPP: _on_message returning - no sender_jid")
                 return
             sender_full = JID(sender_jid)
             sender_bare = str(sender_full.bare)
             self._last_resources[sender_bare] = str(sender_full)
             if sender_bare == JID(self.user_jid).bare:
-                logger.warning("XMPP: _on_message returning — self-message from %s", sender_bare)
+                logger.warning("XMPP: _on_message returning - self-message from %s", sender_bare)
                 return
 
             body = msg.get("body", "").strip()
@@ -1313,7 +1313,7 @@ class XMPPAdapter(BasePlatformAdapter):
                 logger.warning("XMPP: chat %s removed from OMEMO-active set (plaintext received)", sender_bare)
 
             if not body:
-                logger.warning("XMPP: _on_message returning — empty body after decrypt attempt")
+                logger.warning("XMPP: _on_message returning - empty body after decrypt attempt")
                 return
 
             # Send read receipt for messages that request it.
