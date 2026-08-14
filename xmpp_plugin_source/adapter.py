@@ -770,13 +770,12 @@ class XMPPAdapter(BasePlatformAdapter):
                 if i < len(chunks) - 1:
                     await asyncio.sleep(0.2)
 
-            # NOTE: no standalone <active/> chat-state stanza is sent after the
-            # chunks, and the chunks above do not set msg["chat_state"] either.
-            # This is a known gap: some clients (e.g. Gajim) do not treat a plain
-            # message as an implicit transition to "active" and can keep showing
-            # a composing indicator. If that is observed, set
-            # msg["chat_state"] = "active" on each chunk and/or send a trailing
-            # <active/> stanza here.
+            # Send a standalone <active/> chat-state stanza to the bare JID so
+            # every resource (EchoTalk's /EchoTalk, Gajim, etc.) observes the
+            # composing->active transition and clears its "thinking" indicator.
+            # Sent to the bare JID so it reaches all resources regardless of
+            # which one the base adapter's stop_typing() routes to.
+            await self._send_active_to_bare(recipient_bare)
             return SendResult(success=True)
         except Exception as exc:
             logger.exception("XMPP: failed to send message to %s: %s", recipient.bare, exc)
@@ -1093,6 +1092,25 @@ class XMPPAdapter(BasePlatformAdapter):
         # managed by stop_typing() and protects against orphaned ticks.
         if self._typing_state.get(chat_key) == "composing":
             self._typing_state.pop(chat_key, None)
+
+    async def _send_active_to_bare(self, recipient_bare: str) -> None:
+        """Send a standalone <active/> chat-state stanza to a bare JID.
+
+        Sent to the BARE JID (not a specific resource) so every connected
+        resource - including EchoTalk's /EchoTalk and desktop clients like
+        Gajim - observes the composing->active transition and clears its
+        "thinking" indicator. A redundant <active/> is harmless (chat-state is
+        idempotent), so this is safe even when the base adapter also sends one.
+        """
+        if self.client is None:
+            return
+        try:
+            msg = self.client.make_message(mto=JID(recipient_bare), mtype="chat")
+            msg["chat_state"] = "active"
+            msg.send()
+            logger.warning("XMPP: sent standalone <active/> to %s", recipient_bare)
+        except Exception as exc:
+            logger.warning("XMPP: failed to send <active/> to %s: %s", recipient_bare, exc)
 
     async def stop_typing(self, chat_id: str, metadata=None) -> None:
         if not self.typing_indicator or self.client is None:
