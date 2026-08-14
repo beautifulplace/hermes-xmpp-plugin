@@ -770,12 +770,12 @@ class XMPPAdapter(BasePlatformAdapter):
                 if i < len(chunks) - 1:
                     await asyncio.sleep(0.2)
 
-            # Send a standalone <active/> chat-state stanza to the bare JID so
-            # every resource (EchoTalk's /EchoTalk, Gajim, etc.) observes the
-            # composing->active transition and clears its "thinking" indicator.
-            # Sent to the bare JID so it reaches all resources regardless of
-            # which one the base adapter's stop_typing() routes to.
-            await self._send_active_to_bare(recipient_bare)
+            # NOTE: no standalone <active/> chat-state stanza is sent after the
+            # chunks here, and the chunks do not set msg["chat_state"]. Sending
+            # <active/> after EVERY send would prematurely end the agent's turn
+            # for a streaming client like EchoTalk. The end-of-turn <active/> is
+            # instead sent once by stop_typing() at the true end of the turn
+            # (to the bare JID so every resource sees it).
             return SendResult(success=True)
         except Exception as exc:
             logger.exception("XMPP: failed to send message to %s: %s", recipient.bare, exc)
@@ -1123,16 +1123,21 @@ class XMPPAdapter(BasePlatformAdapter):
             # Kill our own refresh loop first so it cannot resurrect composing
             # while we are sending the active stanza or right after.
             self._cancel_typing_refresh_task(chat_key)
-            msg = self.client.make_message(mto=recipient, mtype="chat")
-            msg["chat_state"] = "active"
-            msg.send()
+            # Send the end-of-turn <active/> to the BARE JID (not the last-seen
+            # resource) so every connected resource - including EchoTalk's
+            # /EchoTalk and desktop clients like Gajim - observes the
+            # composing->active transition. The base adapter calls stop_typing()
+            # once at the true end of the agent turn, which is the correct
+            # timing for a streaming client: composing stays true through the
+            # turn and flips to active exactly once at the end.
+            await self._send_active_to_bare(str(recipient.bare))
             self._typing_state[chat_key] = "active"
             # Cooldown: suppress composing refreshes for 3s after a deliberate stop.
             # The base adapter's _keep_typing loop refreshes every 2s and may
             # outlive the stop signal on the /new path, so this prevents the
             # composing bubble from popping back up.
             self._typing_stop_until[chat_key] = asyncio.get_event_loop().time() + 3.0
-            logger.warning("XMPP: stop typing sent to %s", recipient)
+            logger.warning("XMPP: stop typing sent to %s", recipient.bare)
         except Exception as exc:
             logger.warning("XMPP: stop typing send failed: %s", exc)
 
