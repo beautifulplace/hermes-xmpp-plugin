@@ -77,7 +77,7 @@ OMEMO (XEP-0384) is enabled by default so that all messages between the bot and 
 `slixmpp-omemo` is installed automatically by the plugin installer. If you installed manually, install it into the Hermes environment:
 
 ```bash
-/home/lobot/.hermes/hermes-agent/venv/bin/python -m pip install slixmpp-omemo
+~/.hermes/hermes-agent/venv/bin/python -m pip install slixmpp-omemo
 ```
 
 ### Trust model
