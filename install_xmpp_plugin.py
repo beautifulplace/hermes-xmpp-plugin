@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import getpass
-import os
 import shutil
 import subprocess
 import sys
@@ -35,13 +34,13 @@ REQUIRED_PLUGIN_FILES = {
     "README.md",
 }
 
-DEPENDENCIES: list[tuple[str, str, bool]] = [
-    # (pip package, python import name, required)
-    ("slixmpp", "slixmpp", True),
-    ("httpx", "httpx", True),
-    ("Pillow", "PIL", True),
-    ("cryptography", "cryptography", True),
-    ("slixmpp-omemo", "slixmpp_omemo", True),
+DEPENDENCIES: list[tuple[str, str]] = [
+    # (pip package, python import name)
+    ("slixmpp", "slixmpp"),
+    ("httpx", "httpx"),
+    ("Pillow", "PIL"),
+    ("cryptography", "cryptography"),
+    ("slixmpp-omemo", "slixmpp_omemo"),
 ]
 
 # Voice replies require ffmpeg to convert TTS MP3 output into M4A for
@@ -92,17 +91,8 @@ def install_dependencies(
     deps_dir = plugin_dest / "deps"
     deps_dir.mkdir(parents=True, exist_ok=True)
 
-    def _python_env() -> dict[str, str]:
-        """Return an environment that includes the plugin deps dir on PYTHONPATH."""
-        env = os.environ.copy()
-        pythonpath = [str(deps_dir)]
-        if env.get("PYTHONPATH"):
-            pythonpath.append(env["PYTHONPATH"])
-        env["PYTHONPATH"] = os.pathsep.join(dict.fromkeys(pythonpath))
-        return env
-
     to_install = []
-    for pip_name, import_name, required in DEPENDENCIES:
+    for pip_name, import_name in DEPENDENCIES:
         try:
             subprocess.run(
                 [str(python), "-c", f"import {import_name}"],
@@ -149,12 +139,6 @@ def enable_plugin_in_config(
         config_text = add_voice_and_stt_defaults(config_text)
 
     config_path.write_text(config_text)
-
-
-# Kept for backward compatibility if a caller passes the old keyword arguments,
-# but the installer no longer uses them.
-def _ensure_stt_config(config_text: str, model: str) -> str:
-    return config_text
 
 
 def validate_avatar_path(path: str) -> tuple[bool, str]:

@@ -104,7 +104,13 @@ def _mime_from_extension(ext: str) -> str:
         ".mp3": "audio/mpeg",
         ".wav": "audio/wav",
         ".webm": "audio/webm",
-    }.get(ext.lower(), "audio/mp4")
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".bmp": "image/bmp",
+    }.get(ext.lower(), "application/octet-stream")
 
 
 def _is_audio_url(url: str) -> bool:
@@ -113,36 +119,31 @@ def _is_audio_url(url: str) -> bool:
     ))
 
 
-def _is_voice_url(url: str) -> bool:
-    """Return True if the URL looks like a voice message rather than a generic audio file."""
-    lowered = url.lower()
-    # Conversations and similar clients often use voice-message-* filenames.
-    if "voice-message" in lowered:
-        return True
-    # Container formats commonly used for voice messages.
-    return any(lowered.endswith(ext) for ext in (".ogg", ".oga", ".opus", ".webm"))
-
-
 def _guess_audio_is_voice(url: str, body: str, data: Optional[bytes] = None) -> bool:
     """Heuristic to decide if an incoming audio URL is a voice message.
 
     A URL must NOT be treated as voice just because it is short or OMEMO-
     encrypted. OMEMO uses aesgcm:// for images, files, and voice alike, and
     a bare HTTPS URL is a text link unless it actually points to audio.
+
+    The caller only invokes this after confirming the downloaded content is
+    audio, so the final branch treats a bare audio URL with no caption as a
+    voice message regardless of container (m4a, mp3, wav, ogg, etc.). That is
+    intentional: a standalone audio attachment with no accompanying text is the
+    signature of a voice message, while shared music/podcast files almost
+    always carry a filename or description and stay AUDIO.
     """
     lowered = url.lower()
     # Conversations and similar clients often use voice-message-* filenames.
     if "voice-message" in lowered:
         return True
     # Voice messages are usually short, unadorned clips in these containers.
-    # Generic music/podcast attachments (.m4a, .mp3, .wav) are treated as
-    # regular AUDIO, not VOICE.
     if any(lowered.endswith(ext) for ext in (".ogg", ".oga", ".opus", ".webm")):
         return True
-    # If the body is essentially just the URL, only assume voice when we have
-    # downloaded the content and confirmed it is actually audio. Even then,
-    # keep generic audio content as AUDIO; only Ogg/Opus/WebM containers
-    # (handled above) are considered likely voice messages.
+    # A bare audio URL with no caption is the signature of a voice message, so
+    # treat any audio content as voice here (the caller has already confirmed
+    # the content is audio). Shared music/podcast files carry a filename or
+    # description, so they do not reach this branch and stay AUDIO.
     stripped = body.strip()
     if (stripped == url or not stripped) and data is not None:
         return _guess_content_type(data).startswith("audio/")
@@ -258,7 +259,11 @@ class XMPPAdapter(BasePlatformAdapter):
         # caused short acknowledgments to steal the voice reply before the real
         # response was ready.
         self._voice_reply_chats: Dict[str, Dict[str, Any]] = {}
-        self._voice_reply_debounce_task: Optional[asyncio.Task] = None
+        # Per-chat debounce tasks. A single global task would let a second
+        # chat's voice message cancel the first chat's pending reply (leaving
+        # the first entry stuck in _voice_reply_chats forever), so each chat
+        # owns its own debounce timer.
+        self._voice_reply_debounce_tasks: Dict[str, asyncio.Task] = {}
         self._voice_reply_debounce_delay: float = 2.0
         self._last_resources: Dict[str, str] = {}
         # Track bare JIDs that have sent us OMEMO-encrypted messages so replies
@@ -627,32 +632,33 @@ class XMPPAdapter(BasePlatformAdapter):
 
         Tool progress messages are ephemeral updates like "💻 Running...",
         "📖 Reading...", or "🐍 Running code..." that should not consume the
-        pending voice reply. They typically start with an emoji and a verb
-        such as "Running" or "Reading".
+        pending voice reply. The gateway prefixes every tool-progress message
+        with an emoji, so matching the first character (non-alphanumeric,
+        non-space) is simpler and more robust than a fixed verb list, which
+        missed most verbs (Searching, Browsing, Writing, Editing, Generating,
+        Delegating, Scheduling, Asking, Updating, Listing, Clicking, Typing,
+        etc.). A real reply that happens to start with an emoji is an
+        acceptable edge case versus reading every tool call aloud.
         """
-        if content.startswith("⚠️ "):
-            return True
-        # Heuristic: starts with a non-word/non-space character (emoji) and
-        # contains a tool-progress verb near the beginning.
-        if content and not content[0].isalnum() and not content[0].isspace():
-            head = content[:60].lower()
-            if "running" in head or "reading" in head or "executing" in head:
-                return True
-        return False
+        if not content:
+            return False
+        first = content[0]
+        return not first.isalnum() and not first.isspace()
 
     def _schedule_voice_reply(self, recipient_bare: str, recipient: JID) -> None:
-        """Restart the debounce timer for a pending voice reply."""
-        if self._voice_reply_debounce_task is not None:
-            self._voice_reply_debounce_task.cancel()
-            self._voice_reply_debounce_task = None
+        """Restart the debounce timer for a pending voice reply (per chat)."""
+        existing = self._voice_reply_debounce_tasks.get(recipient_bare)
+        if existing is not None and not existing.done():
+            existing.cancel()
+            self._voice_reply_debounce_tasks.pop(recipient_bare, None)
 
         async def _debounced_send() -> None:
             try:
                 await asyncio.sleep(self._voice_reply_debounce_delay)
             except asyncio.CancelledError:
                 return
+            self._voice_reply_debounce_tasks.pop(recipient_bare, None)
             pending = self._voice_reply_chats.pop(recipient_bare, None)
-            self._voice_reply_debounce_task = None
             if pending is None or not pending.get("text"):
                 return
             try:
@@ -660,7 +666,7 @@ class XMPPAdapter(BasePlatformAdapter):
             except Exception as exc:
                 logger.warning("XMPP: TTS voice reply failed (%s); text already sent", exc)
 
-        self._voice_reply_debounce_task = asyncio.create_task(_debounced_send())
+        self._voice_reply_debounce_tasks[recipient_bare] = asyncio.create_task(_debounced_send())
 
     async def _send_voice_reply_text(self, recipient: JID, text: str) -> SendResult:
         """Generate TTS audio for the first chunk of text and send as a voice message.
@@ -771,12 +777,11 @@ class XMPPAdapter(BasePlatformAdapter):
                     await asyncio.sleep(0.2)
 
             # NOTE: no standalone <active/> chat-state stanza is sent after the
-            # chunks, and the chunks above do not set msg["chat_state"] either.
-            # This is a known gap: some clients (e.g. Gajim) do not treat a plain
-            # message as an implicit transition to "active" and can keep showing
-            # a composing indicator. If that is observed, set
-            # msg["chat_state"] = "active" on each chunk and/or send a trailing
-            # <active/> stanza here.
+            # chunks here, and the chunks do not set msg["chat_state"]. Sending
+            # <active/> after EVERY send would prematurely end the agent's turn
+            # for a streaming client like EchoTalk. The end-of-turn <active/> is
+            # instead sent once by stop_typing() at the true end of the turn
+            # (to the bare JID so every resource sees it).
             return SendResult(success=True)
         except Exception as exc:
             logger.exception("XMPP: failed to send message to %s: %s", recipient.bare, exc)
@@ -1094,6 +1099,25 @@ class XMPPAdapter(BasePlatformAdapter):
         if self._typing_state.get(chat_key) == "composing":
             self._typing_state.pop(chat_key, None)
 
+    async def _send_active_to_bare(self, recipient_bare: str) -> None:
+        """Send a standalone <active/> chat-state stanza to a bare JID.
+
+        Sent to the BARE JID (not a specific resource) so every connected
+        resource - including EchoTalk's /EchoTalk and desktop clients like
+        Gajim - observes the composing->active transition and clears its
+        "thinking" indicator. A redundant <active/> is harmless (chat-state is
+        idempotent), so this is safe even when the base adapter also sends one.
+        """
+        if self.client is None:
+            return
+        try:
+            msg = self.client.make_message(mto=JID(recipient_bare), mtype="chat")
+            msg["chat_state"] = "active"
+            msg.send()
+            logger.warning("XMPP: sent standalone <active/> to %s", recipient_bare)
+        except Exception as exc:
+            logger.warning("XMPP: failed to send <active/> to %s: %s", recipient_bare, exc)
+
     async def stop_typing(self, chat_id: str, metadata=None) -> None:
         if not self.typing_indicator or self.client is None:
             logger.debug("XMPP: stop_typing skipped (disabled or no client)")
@@ -1105,16 +1129,21 @@ class XMPPAdapter(BasePlatformAdapter):
             # Kill our own refresh loop first so it cannot resurrect composing
             # while we are sending the active stanza or right after.
             self._cancel_typing_refresh_task(chat_key)
-            msg = self.client.make_message(mto=recipient, mtype="chat")
-            msg["chat_state"] = "active"
-            msg.send()
+            # Send the end-of-turn <active/> to the BARE JID (not the last-seen
+            # resource) so every connected resource - including EchoTalk's
+            # /EchoTalk and desktop clients like Gajim - observes the
+            # composing->active transition. The base adapter calls stop_typing()
+            # once at the true end of the agent turn, which is the correct
+            # timing for a streaming client: composing stays true through the
+            # turn and flips to active exactly once at the end.
+            await self._send_active_to_bare(str(recipient.bare))
             self._typing_state[chat_key] = "active"
             # Cooldown: suppress composing refreshes for 3s after a deliberate stop.
             # The base adapter's _keep_typing loop refreshes every 2s and may
             # outlive the stop signal on the /new path, so this prevents the
             # composing bubble from popping back up.
             self._typing_stop_until[chat_key] = asyncio.get_event_loop().time() + 3.0
-            logger.warning("XMPP: stop typing sent to %s", recipient)
+            logger.warning("XMPP: stop typing sent to %s", recipient.bare)
         except Exception as exc:
             logger.warning("XMPP: stop typing send failed: %s", exc)
 
@@ -1169,8 +1198,15 @@ class XMPPAdapter(BasePlatformAdapter):
             return None
 
     def _extract_url(self, text: str) -> Optional[str]:
-        match = re.search(r"https?://\S+|aesgcm://\S+", text)
-        return match.group(0) if match else None
+        # Match a URL, then strip trailing punctuation (.,;:!?) and closing
+        # brackets/quotes that are not part of the URL. The period is kept in
+        # the match because it is a legitimate URL character (domain names and
+        # file extensions); only a trailing period is removed afterward.
+        match = re.search(r"https?://[^\s<>\"')\]}]+|aesgcm://[^\s<>\"')\]}]+", text)
+        if not match:
+            return None
+        url = match.group(0)
+        return url.rstrip(".,;:!?")
 
     # -- Avatar --------------------------------------------------------------
 
@@ -1193,7 +1229,11 @@ class XMPPAdapter(BasePlatformAdapter):
             left = (width - side) // 2
             top = (height - side) // 2
             img = img.crop((left, top, left + side, top + side))
-            img = img.resize((480, 480), Image.LANCZOS)
+            try:
+                img = img.resize((480, 480), Image.Resampling.LANCZOS)
+            except AttributeError:
+                # Pillow < 9.1 uses the Image.LANCZOS constant.
+                img = img.resize((480, 480), Image.LANCZOS)
 
             png_buffer = io.BytesIO()
             img.save(png_buffer, format="PNG", optimize=True)
@@ -1244,16 +1284,6 @@ class XMPPAdapter(BasePlatformAdapter):
                 self.client.get_roster()
         except Exception:
             pass
-        try:
-            def _log_sent_xml(stanza):
-                logger.warning("XMPP: SENT XML: %s", stanza)
-            def _log_recv_xml(stanza):
-                logger.warning("XMPP: RECV XML: %s", stanza)
-            self.client.add_event_handler("raw_send", _log_sent_xml)
-            self.client.add_event_handler("raw_recv", _log_recv_xml)
-            logger.warning("XMPP: raw XML logging enabled")
-        except Exception as exc:
-            logger.warning("XMPP: failed to enable raw XML logging: %s", exc)
         self._session_started_event.set()
 
     async def _omemo_initialized(self, event=None):
@@ -1312,9 +1342,11 @@ class XMPPAdapter(BasePlatformAdapter):
                 self._omemo_chats.discard(sender_bare)
                 logger.warning("XMPP: chat %s removed from OMEMO-active set (plaintext received)", sender_bare)
 
-            if not body:
-                logger.warning("XMPP: _on_message returning - empty body after decrypt attempt")
-                return
+            # NOTE: do NOT return early on an empty body here. Voice and image
+            # messages are often sent as standalone media with an empty text
+            # body; the URL lives in <oob>/<file-sharing>, which is extracted
+            # below. We only drop the message later if there is no body AND no
+            # media URL.
 
             # Send read receipt for messages that request it.
             try:
@@ -1340,33 +1372,42 @@ class XMPPAdapter(BasePlatformAdapter):
                 # <file-sharing>/<file>/<desc> plus a source <url>. Clients like
                 # Beagle, Dino, or newer versions of Conversations may use these
                 # instead of the older OOB extension.
+                #
+                # Namespace split (per XEP-0447): <file-sharing> is in
+                # urn:xmpp:sfs:0, but its <file> child is in urn:xmpp:share:1.
+                # The outbound side (send_voice/send_image_file) uses this same
+                # split, so the inbound parser must too.
                 try:
                     ns_share = "urn:xmpp:share:1"
                     ns_sshare = "urn:xmpp:sfs:0"
-                    for ns in (ns_sshare, ns_share):
-                        for sfs in msg.xml.findall(f".//{{{ns}}}file-sharing"):
-                            file_el = sfs.find(f"{{{ns}}}file")
-                            if file_el is None:
-                                continue
-                            url_el = file_el.find(f"{{{ns}}}uri") or file_el.find(f"{{{ns}}}url")
-                            if url_el is not None and url_el.text:
-                                url = url_el.text.strip()
-                                break
-                            # Some clients put the URL in a <sources>/<url> child.
-                            sources = file_el.find(f"{{{ns}}}sources") or sfs.find(f"{{{ns}}}sources")
-                            if sources is not None:
-                                for source_url in sources.findall(f".//{{{ns}}}url"):
-                                    if source_url is not None and source_url.text:
-                                        url = source_url.text.strip()
-                                        break
-                            if url:
-                                break
+                    for sfs in msg.xml.findall(f".//{{{ns_sshare}}}file-sharing"):
+                        file_el = sfs.find(f"{{{ns_share}}}file")
+                        if file_el is None:
+                            continue
+                        url_el = file_el.find(f"{{{ns_share}}}uri") or file_el.find(f"{{{ns_share}}}url")
+                        if url_el is not None and url_el.text:
+                            url = url_el.text.strip()
+                            break
+                        # Some clients put the URL in a <sources>/<url> child.
+                        sources = file_el.find(f"{{{ns_share}}}sources") or sfs.find(f"{{{ns_sshare}}}sources")
+                        if sources is not None:
+                            for source_url in sources.findall(f".//{{{ns_share}}}url"):
+                                if source_url is not None and source_url.text:
+                                    url = source_url.text.strip()
+                                    break
                         if url:
                             break
                 except Exception:
                     pass
             if not url:
                 url = self._extract_url(body)
+
+            # Drop only when there is no text AND no media URL. A standalone
+            # media message (voice/image) has an empty body but a URL, so it
+            # must not be dropped here.
+            if not body and not url:
+                logger.warning("XMPP: _on_message returning - empty body and no media URL")
+                return
 
             media_path: Optional[str] = None
             msg_type = MessageType.TEXT
@@ -1520,7 +1561,9 @@ class XMPPAdapter(BasePlatformAdapter):
                 ext = ".ogg" if kind == "audio" else ".png"
             elif not ext:
                 ext = ".ogg" if kind == "audio" else ".png"
-            mime = "audio/mpeg" if kind == "audio" else "image/png"
+            # Derive the MIME type from the actual extension so the cached file
+            # is tagged correctly (e.g. .ogg -> audio/ogg, not audio/mpeg).
+            mime = _mime_from_extension(ext)
             validate_inbound_media_size(len(data), media_type=kind)
             # Use a unique filename to prevent cache collisions
             filename = f"xmpp_{uuid.uuid4().hex}{ext}"
