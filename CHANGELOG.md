@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.1] - 2026-08-27
+
+### Changed
+- **Dashboard card text.** The plugin `install_hint` — shown as the channel description on
+  the Hermes dashboard Channels page — is now the user-facing sentence "Talk to Hermes
+  over XMPP" instead of the pip dependency command (changed in `plugin.yaml` and the
+  `PlatformEntry` registration in `adapter.py`).
+- **Logging cleanup.** Reduced verbosity of routine XMPP connection, send, and chat-state
+  log lines in `adapter.py`.
+- **OMEMO state persistence.** OMEMO `JSONFileStorage` now writes asynchronously under a
+  lock and offloads disk I/O to a worker thread to avoid blocking the gateway event loop.
+
 ## [1.1.0] - 2026-08-20
 
 ### Added
