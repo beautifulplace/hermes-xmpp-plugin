@@ -451,6 +451,16 @@ class XMPPAdapter(BasePlatformAdapter):
                 logger.info("XMPP: OMEMO ready")
             except asyncio.TimeoutError:
                 logger.warning("XMPP: OMEMO did not signal readiness within 30s")
+            # Prune stale OMEMO sessions/devices so the store does not balloon
+            # and desynced ratchets do not accumulate.
+            try:
+                omemo = self._omemo_plugin()
+                if omemo is not None and hasattr(omemo, "prune_stale_sessions"):
+                    removed = await omemo.prune_stale_sessions()
+                    if removed:
+                        logger.info("XMPP: pruned %d stale OMEMO session/device keys", removed)
+            except Exception as exc:
+                logger.warning("XMPP: OMEMO session pruning failed: %s", exc)
         if self.avatar_path:
             logger.info("XMPP: publishing avatar from %s", self.avatar_path)
             await self._publish_avatar()

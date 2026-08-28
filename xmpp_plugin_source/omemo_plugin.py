@@ -107,6 +107,86 @@ class HermesOMEMO(XEP_0384):
     def _btbv_enabled(self) -> bool:
         return self._allow_untrusted
 
+    async def prune_stale_sessions(self) -> int:
+        """Remove OMEMO session state for devices that are no longer active.
+
+        The OMEMO store grows without bound: every time we talk to a peer
+        device we persist a double-ratchet session, and sessions for devices
+        that have since been removed from the peer's device list are never
+        cleaned up. Over time this balloons into hundreds of stale keys and
+        can leave a desynced ratchet that fails to decrypt.
+
+        This prunes, for every peer we have a device list for:
+          - double-ratchet session keys for device IDs no longer in the list
+          - the bot's own stale device entries (keep only the active device)
+
+        Returns the number of keys removed.
+        """
+        storage = self._storage
+        removed = 0
+
+        try:
+            own_device_id = (await storage.load_primitive("/own_device_id", int)).from_just()
+        except Exception:
+            own_device_id = None
+
+        # Collect all bare JIDs that have a device list.
+        jids = set()
+        for key in list(storage._data.keys()):
+            if key.startswith("/devices/") and key.endswith("/list"):
+                jids.add(key.split("/")[2])
+
+        for jid in jids:
+            current = set(storage._data.get(f"/devices/{jid}/list", []) or [])
+            # Prune double-ratchet sessions for devices no longer in the list.
+            prefix = f"/eu.siacs.conversations.axolotl/{jid}/"
+            for key in list(storage._data.keys()):
+                if not key.startswith(prefix):
+                    continue
+                parts = key.split("/")
+                if len(parts) < 5:
+                    continue
+                device_id = parts[4]
+                try:
+                    device_id = int(device_id)
+                except ValueError:
+                    continue
+                if device_id not in current:
+                    del storage._data[key]
+                    removed += 1
+
+        # Prune the bot's own stale device entries, keeping only the active one.
+        if own_device_id is not None:
+            own_jid = None
+            for key in list(storage._data.keys()):
+                if key.startswith("/devices/") and key.endswith("/list"):
+                    if own_device_id in (storage._data.get(key, []) or []):
+                        own_jid = key.split("/")[2]
+                        break
+            if own_jid:
+                own_prefix = f"/devices/{own_jid}/"
+                for key in list(storage._data.keys()):
+                    if not key.startswith(own_prefix):
+                        continue
+                    parts = key.split("/")
+                    if len(parts) < 4:
+                        continue
+                    device_id = parts[3]
+                    if device_id == "list":
+                        continue
+                    try:
+                        device_id = int(device_id)
+                    except ValueError:
+                        continue
+                    if device_id != own_device_id:
+                        del storage._data[key]
+                        removed += 1
+
+        if removed:
+            await storage._save()
+            logger.info("OMEMO: pruned %d stale session/device keys", removed)
+        return removed
+
     async def _devices_blindly_trusted(
         self,
         blindly_trusted: FrozenSet,
