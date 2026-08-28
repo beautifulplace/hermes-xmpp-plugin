@@ -114,7 +114,13 @@ def _mime_from_extension(ext: str) -> str:
 
 
 def _is_audio_url(url: str) -> bool:
-    return any(url.lower().endswith(ext) for ext in (
+    # Strip query string and fragment so URLs like
+    # https://example.com/audio.mp3?token=abc are still recognized as audio.
+    try:
+        path = urlparse(url).path
+    except Exception:
+        path = url
+    return any(path.lower().endswith(ext) for ext in (
         ".ogg", ".oga", ".mp3", ".m4a", ".webm", ".wav", ".opus"
     ))
 
@@ -177,8 +183,17 @@ def _guess_audio_extension(url: str, data: bytes) -> str:
     return ".ogg"
 
 def _is_media_url(url: str) -> bool:
-    """Return True if the URL path has a known media file extension."""
-    lowered = url.lower()
+    """Return True if the URL path has a known media file extension.
+
+    Query strings and fragments are stripped before the extension check so
+    URLs like https://example.com/photo.jpg?size=large or
+    https://example.com/audio.mp3#frag are still recognized as media.
+    """
+    try:
+        path = urlparse(url).path
+    except Exception:
+        path = url
+    lowered = path.lower()
     return any(lowered.endswith(ext) for ext in (
         ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".ico",
         ".mp3", ".m4a", ".ogg", ".oga", ".opus", ".wav", ".webm",
@@ -611,16 +626,24 @@ class XMPPAdapter(BasePlatformAdapter):
 
         # Reply to the exact resource we last saw from this bare JID, if known.
         # This matches how real XMPP clients (Dino, Conversations) route replies.
-        cached_resource = self._last_resources.get(str(recipient.bare))
-        if cached_resource:
-            try:
-                recipient = JID(cached_resource)
-                logger.debug("XMPP: send() using cached resource %s", cached_resource)
-            except Exception as exc:
-                logger.warning("XMPP: could not use cached resource %s: %s", cached_resource, exc)
+        # EXCEPTION: for OMEMO-active chats we send to the BARE JID so
+        # slixmpp-omemo encrypts for every published device and all the user's
+        # clients receive the reply. Sending to a single cached resource can
+        # deliver only to the one device that last messaged the bot.
+        recipient_bare = str(recipient.bare)
+        if recipient_bare in self._omemo_chats:
+            recipient = JID(recipient_bare)
+            logger.debug("XMPP: send() using bare JID for OMEMO chat %s", recipient_bare)
+        else:
+            cached_resource = self._last_resources.get(recipient_bare)
+            if cached_resource:
+                try:
+                    recipient = JID(cached_resource)
+                    logger.debug("XMPP: send() using cached resource %s", cached_resource)
+                except Exception as exc:
+                    logger.warning("XMPP: could not use cached resource %s: %s", cached_resource, exc)
 
         text = content
-        recipient_bare = str(recipient.bare)
         is_tool_progress = self._is_tool_progress_message(content)
 
         # If this chat has a pending voice reply, update the buffered text
