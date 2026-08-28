@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.1.3] - 2026-08-27
+
+### Fixed
+- **Media URL detection with query strings/fragments.** `_is_media_url()` and
+  `_is_audio_url()` now strip the query string and fragment before the
+  extension check, so URLs like `photo.jpg?size=large` or `audio.mp3#frag` are
+  recognized as media instead of being treated as plain text links.
+- **OMEMO replies delivered to all devices.** `send()` now routes OMEMO-active
+  chats to the bare JID so slixmpp-omemo encrypts for every published device
+  and all the user's clients receive the reply, instead of only the single
+  cached resource that last messaged the bot.
+- **Removed dead ffmpeg dependency.** The unused `SYSTEM_DEPENDENCIES` ffmpeg
+  dict and its stale "convert MP3 to M4A" comment were removed from the
+  installer (MP3 voice replies work directly; ffmpeg is not used).
+
 ## [1.1.2] - 2026-08-27
 
 ### Fixed
