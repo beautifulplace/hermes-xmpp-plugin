@@ -513,10 +513,18 @@ class XMPPAdapter(BasePlatformAdapter):
                     self.client.send_raw(" ")
                     self._last_activity = asyncio.get_event_loop().time()
             except Exception as exc:
-                logger.warning("XMPP: keepalive ping failed: %s", exc)
-                if self.is_connected:
-                    self._schedule_internal_reconnect("ping_failed", str(exc))
-                break
+                # A single ping timeout is NOT fatal: on a slow link a ping can
+                # exceed the timeout while the stream is still healthy. Fall back
+                # to a whitespace keepalive and keep the loop alive. Only a real
+                # stream drop (the slixmpp "disconnected" event) should trigger
+                # a reconnect.
+                logger.warning("XMPP: keepalive ping failed (%s); using whitespace keepalive", exc)
+                try:
+                    if self.client is not None:
+                        self.client.send_raw(" ")
+                        self._last_activity = asyncio.get_event_loop().time()
+                except Exception:
+                    pass
 
     def _schedule_internal_reconnect(self, code: str, message: str) -> None:
         """Schedule an internal reconnect attempt before escalating to the gateway.
@@ -587,6 +595,17 @@ class XMPPAdapter(BasePlatformAdapter):
                     await task
                 except asyncio.CancelledError:
                     pass
+        # Cancel per-chat typing refresh loops and pending voice-reply debounce
+        # timers so they do not outlive the client on a reconnect/shutdown.
+        for task in list(self._typing_refresh_tasks.values()):
+            if task and not task.done():
+                task.cancel()
+        self._typing_refresh_tasks.clear()
+        for task in list(self._voice_reply_debounce_tasks.values()):
+            if task and not task.done():
+                task.cancel()
+        self._voice_reply_debounce_tasks.clear()
+        self._voice_reply_chats.clear()
         # Cancel any slixmpp connection-future watchers.
         for task in list(self._xmpp_background_tasks):
             if task and not task.done():
@@ -1699,7 +1718,6 @@ _XMPP_YAML_KEYS = (
     "port",
     "omemo_enabled",
     "omemo_allow_untrusted",
-    "typing_indicator",
     "avatar_path",
     "home_channel",
     "allowed_users",

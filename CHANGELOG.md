@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.1.4] - 2026-08-27
+
+### Fixed
+- **Keepalive ping timeout no longer triggers a reconnect.** A single XEP-0199
+  ping that exceeds the timeout on a slow link is no longer treated as fatal.
+  The adapter now falls back to a whitespace keepalive and keeps the loop
+  alive; only a real stream drop (the slixmpp "disconnected" event) triggers a
+  reconnect.
+- **Background tasks cancelled on client cleanup.** `_cleanup_client()` now
+  cancels per-chat typing refresh loops and pending voice-reply debounce
+  timers (and clears the voice-reply queue) so they do not outlive the client
+  on a reconnect or shutdown.
+- **Removed dead `typing_indicator` config bridge.** `typing_indicator` was
+  still listed in `_XMPP_YAML_KEYS` and bridged by `_apply_yaml_config`, but
+  the adapter hardcodes it to `True` and ignores config. The dead bridge is
+  removed.
+
 ## [1.1.3] - 2026-08-27
 
 ### Fixed
