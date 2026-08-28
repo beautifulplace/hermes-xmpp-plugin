@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.1.2] - 2026-08-27
+
+### Fixed
+- **OMEMO session/device accumulation.** The OMEMO store grew without bound:
+  every exchange with a peer device persisted a double-ratchet session, and
+  sessions for devices removed from the peer's device list were never cleaned
+  up. Over time this ballooned into hundreds of stale keys and could leave a
+  desynced ratchet that failed to decrypt ("Authentication tags do not
+  match"). Added `HermesOMEMO.prune_stale_sessions()`, called after OMEMO is
+  ready at startup, which removes double-ratchet sessions for peer devices no
+  longer in the current device list and cleans up the bot's own stale device
+  entries (keeping only the active one).
+
 ## [1.1.1] - 2026-08-27
 
 ### Changed
