@@ -38,7 +38,8 @@ class JSONFileStorage(Storage):
             self._data = json.loads(self._path.read_text())
         except (json.JSONDecodeError, OSError):
             self._data = {}
-            self._save()
+            self._write_sync("{}")
+        self._save_lock = asyncio.Lock()
 
     async def _load(self, key: str) -> Maybe[JSONType]:
         if key in self._data:
@@ -47,16 +48,26 @@ class JSONFileStorage(Storage):
 
     async def _store(self, key: str, value: JSONType) -> None:
         self._data[key] = value
-        self._save()
+        await self._save()
 
     async def _delete(self, key: str) -> None:
         self._data.pop(key, None)
-        self._save()
+        await self._save()
 
-    def _save(self) -> None:
+    def _write_sync(self, data: str) -> None:
         tmp = self._path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self._data, sort_keys=True, indent=2))
+        tmp.write_text(data)
         tmp.replace(self._path)
+
+    async def _save(self) -> None:
+        # Serialize under the lock (a consistent snapshot), then offload the
+        # blocking disk write to a worker thread so the gateway's event loop
+        # never stalls on I/O. The OMEMO state file grows over time (sessions,
+        # device keys) and was being rewritten synchronously on every encrypt,
+        # blocking the loop long enough to trip the liveness watchdog.
+        async with self._save_lock:
+            data = json.dumps(self._data, sort_keys=True, indent=2)
+            await asyncio.to_thread(self._write_sync, data)
 
 
 class HermesOMEMO(XEP_0384):

@@ -398,7 +398,7 @@ class XMPPAdapter(BasePlatformAdapter):
             self.client.add_event_handler("stream_negotiated", self._on_stream_negotiated)
             self.client.add_event_handler("failed_auth", self._on_failed_auth)
 
-            logger.warning("XMPP: connecting as %s to %s:%s ...", self.user_jid, self.server or "(auto)", self.port)
+            logger.info("XMPP: connecting as %s to %s:%s ...", self.user_jid, self.server or "(auto)", self.port)
 
             # slixmpp connect() returns a Future that completes when the
             # connection *ends*; do not await it. Wait for session_start instead.
@@ -412,7 +412,7 @@ class XMPPAdapter(BasePlatformAdapter):
                 await asyncio.wait_for(
                     self._session_started_event.wait(), timeout=30.0
                 )
-                logger.warning("XMPP: session_start event received and awaited")
+                logger.info("XMPP: session_start event received and awaited")
             except asyncio.TimeoutError:
                 logger.error("XMPP: session_start did not arrive within 30s")
                 self._set_fatal_error(
@@ -588,7 +588,7 @@ class XMPPAdapter(BasePlatformAdapter):
         reply_to: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
-        logger.warning("XMPP: send() called chat_id=%s content=%r", chat_id, content[:80])
+        logger.debug("XMPP: send() called chat_id=%s content=%r", chat_id, content[:80])
         if self.client is None:
             logger.error("XMPP: cannot send, client not connected")
             return SendResult(success=False, error="not connected")
@@ -605,7 +605,7 @@ class XMPPAdapter(BasePlatformAdapter):
         if cached_resource:
             try:
                 recipient = JID(cached_resource)
-                logger.warning("XMPP: send() using cached resource %s", cached_resource)
+                logger.debug("XMPP: send() using cached resource %s", cached_resource)
             except Exception as exc:
                 logger.warning("XMPP: could not use cached resource %s: %s", cached_resource, exc)
 
@@ -704,7 +704,7 @@ class XMPPAdapter(BasePlatformAdapter):
         return SendResult(success=False, error="TTS audio generation failed")
 
     async def _send_text(self, recipient: JID, text: str) -> SendResult:
-        logger.warning("XMPP: _send_text() called for %s: %d chars omemo_chats=%s", recipient.bare, len(text), self._omemo_chats)
+        logger.debug("XMPP: _send_text() called for %s: %d chars omemo_chats=%s", recipient.bare, len(text), self._omemo_chats)
         # XMPP servers and clients often choke on very large stanzas.
         # Split response into smaller, manageable chunks.
         chunk_size = 2000
@@ -734,7 +734,7 @@ class XMPPAdapter(BasePlatformAdapter):
                             recipient_jids={recipient},
                             identifier=str(recipient.bare),
                         )
-                        logger.warning("XMPP: encrypt_message returned encrypted=%s errors=%s", encrypted is not None, _errors)
+                        logger.debug("XMPP: encrypt_message returned encrypted=%s errors=%s", encrypted is not None, _errors)
                         if encrypted is not None:
                             # `encrypted` is the original Message stanza with its payload
                             # replaced by the OMEMO <encrypted/> element. Try to tag it
@@ -752,7 +752,7 @@ class XMPPAdapter(BasePlatformAdapter):
                             except Exception as eme_exc:
                                 logger.debug("XMPP: failed to set EME namespace: %s", eme_exc)
                             encrypted.send()
-                            logger.warning("XMPP: OMEMO message chunk %d/%d sent to %s", i+1, len(chunks), recipient)
+                            logger.debug("XMPP: OMEMO message chunk %d/%d sent to %s", i+1, len(chunks), recipient)
                             if i < len(chunks) - 1:
                                 await asyncio.sleep(0.2)
                             continue
@@ -770,9 +770,9 @@ class XMPPAdapter(BasePlatformAdapter):
                     logger.error("XMPP: OMEMO encryption required for %s but no encrypted stanza produced", recipient)
                     return SendResult(success=False, error="OMEMO encryption required but no encrypted stanza produced")
 
-                logger.warning("XMPP: sending plaintext chunk %d/%d to %s", i+1, len(chunks), recipient)
+                logger.debug("XMPP: sending plaintext chunk %d/%d to %s", i+1, len(chunks), recipient)
                 msg.send()
-                logger.warning("XMPP: plaintext message chunk %d/%d sent to %s", i+1, len(chunks), recipient)
+                logger.debug("XMPP: plaintext message chunk %d/%d sent to %s", i+1, len(chunks), recipient)
                 if i < len(chunks) - 1:
                     await asyncio.sleep(0.2)
 
@@ -1061,7 +1061,7 @@ class XMPPAdapter(BasePlatformAdapter):
             msg["chat_state"] = "composing"
             msg.send()
             self._typing_state[chat_key] = "composing"
-            logger.warning("XMPP: typing indicator sent to %s", recipient_bare)
+            logger.debug("XMPP: typing indicator sent to %s", recipient_bare)
             # Start a self-owned refresh loop for XEP-0085 chat states.  This is
             # the only refresh loop we rely on; the base adapter's generic loop
             # is overridden above to a single send + this refresh.
@@ -1114,7 +1114,7 @@ class XMPPAdapter(BasePlatformAdapter):
             msg = self.client.make_message(mto=JID(recipient_bare), mtype="chat")
             msg["chat_state"] = "active"
             msg.send()
-            logger.warning("XMPP: sent standalone <active/> to %s", recipient_bare)
+            logger.debug("XMPP: sent standalone <active/> to %s", recipient_bare)
         except Exception as exc:
             logger.warning("XMPP: failed to send <active/> to %s: %s", recipient_bare, exc)
 
@@ -1143,7 +1143,7 @@ class XMPPAdapter(BasePlatformAdapter):
             # outlive the stop signal on the /new path, so this prevents the
             # composing bubble from popping back up.
             self._typing_stop_until[chat_key] = asyncio.get_event_loop().time() + 3.0
-            logger.warning("XMPP: stop typing sent to %s", recipient.bare)
+            logger.debug("XMPP: stop typing sent to %s", recipient.bare)
         except Exception as exc:
             logger.warning("XMPP: stop typing send failed: %s", exc)
 
@@ -1277,7 +1277,7 @@ class XMPPAdapter(BasePlatformAdapter):
     # -- Receiving -----------------------------------------------------------
 
     async def _session_start(self, event):
-        logger.warning("XMPP: session_start handler fired for %s", self.user_jid)
+        logger.info("XMPP: session_start handler fired for %s", self.user_jid)
         try:
             if self.client:
                 self.client.send_presence()
@@ -1295,20 +1295,20 @@ class XMPPAdapter(BasePlatformAdapter):
             if msg["type"] not in ("chat", "normal"):
                 return
 
-            logger.warning("XMPP: _on_message fired type=%s from=%s", msg.get("type", ""), msg["from"])
+            logger.debug("XMPP: _on_message fired type=%s from=%s", msg.get("type", ""), msg["from"])
             sender_jid = msg["from"]
             if not sender_jid:
-                logger.warning("XMPP: _on_message returning - no sender_jid")
+                logger.debug("XMPP: _on_message returning - no sender_jid")
                 return
             sender_full = JID(sender_jid)
             sender_bare = str(sender_full.bare)
             self._last_resources[sender_bare] = str(sender_full)
             if sender_bare == JID(self.user_jid).bare:
-                logger.warning("XMPP: _on_message returning - self-message from %s", sender_bare)
+                logger.debug("XMPP: _on_message returning - self-message from %s", sender_bare)
                 return
 
             body = msg.get("body", "").strip()
-            logger.warning("XMPP: _on_message body=%r has_encrypted check next", body)
+            logger.debug("XMPP: _on_message body=%r has_encrypted check next", body)
             encrypted = False
 
             # Only attempt OMEMO decryption if the stanza actually contains an
@@ -1320,7 +1320,7 @@ class XMPPAdapter(BasePlatformAdapter):
                 msg.xml.find(".//{eu.siacs.conversations.axolotl}encrypted") is not None
                 or msg.xml.find(".//{urn:xmpp:omemo:2}encrypted") is not None
             )
-            logger.warning("XMPP: _on_message has_encrypted=%s omemo=%s omemo_enabled=%s", has_encrypted, omemo is not None, self.omemo_enabled)
+            logger.debug("XMPP: _on_message has_encrypted=%s omemo=%s omemo_enabled=%s", has_encrypted, omemo is not None, self.omemo_enabled)
             if omemo is not None and self.omemo_enabled and has_encrypted:
                 try:
                     decrypted, _device_info = await omemo.decrypt_message(msg)
@@ -1328,7 +1328,7 @@ class XMPPAdapter(BasePlatformAdapter):
                     if body_text and body_text != body:
                         body = body_text
                         encrypted = True
-                        logger.warning("XMPP: OMEMO decrypted message from %s: %s chars", sender_bare, len(body))
+                        logger.debug("XMPP: OMEMO decrypted message from %s: %s chars", sender_bare, len(body))
                 except Exception as exc:
                     logger.warning("XMPP: OMEMO decrypt attempt failed: %s", exc, exc_info=True)
                     # Fall back to plaintext body if decryption fails.
@@ -1336,11 +1336,11 @@ class XMPPAdapter(BasePlatformAdapter):
             # Remember that this chat is OMEMO-active so all replies are encrypted.
             if encrypted and sender_bare not in self._omemo_chats:
                 self._omemo_chats.add(sender_bare)
-                logger.warning("XMPP: chat %s added to OMEMO-active set", sender_bare)
+                logger.debug("XMPP: chat %s added to OMEMO-active set", sender_bare)
             elif not encrypted and sender_bare in self._omemo_chats:
                 # If the contact downgrades to plaintext, stop forcing OMEMO.
                 self._omemo_chats.discard(sender_bare)
-                logger.warning("XMPP: chat %s removed from OMEMO-active set (plaintext received)", sender_bare)
+                logger.debug("XMPP: chat %s removed from OMEMO-active set (plaintext received)", sender_bare)
 
             # NOTE: do NOT return early on an empty body here. Voice and image
             # messages are often sent as standalone media with an empty text
@@ -1351,7 +1351,7 @@ class XMPPAdapter(BasePlatformAdapter):
             # Send read receipt for messages that request it.
             try:
                 markable = msg.xml.find(".//{urn:xmpp:chat-markers:0}markable") is not None
-                logger.warning("XMPP: _on_message markable=%s", markable)
+                logger.debug("XMPP: _on_message markable=%s", markable)
                 if markable:
                     await self._send_displayed_marker(sender_bare, msg.get("id", self.client.new_id()))
             except Exception as marker_exc:
@@ -1406,7 +1406,7 @@ class XMPPAdapter(BasePlatformAdapter):
             # media message (voice/image) has an empty body but a URL, so it
             # must not be dropped here.
             if not body and not url:
-                logger.warning("XMPP: _on_message returning - empty body and no media URL")
+                logger.debug("XMPP: _on_message returning - empty body and no media URL")
                 return
 
             media_path: Optional[str] = None
@@ -1516,7 +1516,7 @@ class XMPPAdapter(BasePlatformAdapter):
                 metadata={"encrypted": encrypted, "media_url": url, "media_path": media_path},
             )
 
-            logger.warning("XMPP: about to handle_message event text=%r type=%s", display_text, msg_type)
+            logger.debug("XMPP: about to handle_message event text=%r type=%s", display_text, msg_type)
 
             # If the inbound message was a voice message, opt this DM chat into
             # the adapter-level voice reply queue so we reply with TTS audio plus
@@ -1530,7 +1530,7 @@ class XMPPAdapter(BasePlatformAdapter):
                 )
 
             await self.handle_message(event)
-            logger.warning("XMPP: handle_message completed")
+            logger.debug("XMPP: handle_message completed")
         except Exception:
             logger.exception("XMPP: unhandled error in message handler")
 
@@ -1551,7 +1551,7 @@ class XMPPAdapter(BasePlatformAdapter):
             # client displays the proper read receipt (second checkmark) instead of
             # treating the marker as a regular message.
             marker_plugin.send_marker(mto=recipient, id=message_id, marker="displayed", mtype="chat")
-            logger.warning("XMPP: sent displayed marker to %s for %s", recipient, message_id)
+            logger.debug("XMPP: sent displayed marker to %s for %s", recipient, message_id)
         except Exception as exc:
             logger.debug("XMPP: failed to send displayed marker: %s", exc)
 
@@ -1688,7 +1688,7 @@ def register(ctx):
         validate_config=validate_config,
         is_connected=is_connected,
         required_env=["XMPP_USER_JID", "XMPP_PASSWORD"],
-        install_hint="pip install slixmpp slixmpp-omemo httpx Pillow cryptography",
+        install_hint="Talk to Hermes over XMPP",
         setup_fn=interactive_setup,
         env_enablement_fn=_env_enablement,
         apply_yaml_config_fn=_apply_yaml_config,

@@ -50,5 +50,5 @@ optional_env:
     description: "Path to an image file to publish as the bot's XMPP avatar (optional)"
     prompt: "Avatar image path (optional)"
     password: false
-install_hint: "pip install slixmpp slixmpp-omemo httpx Pillow cryptography"
+install_hint: "Talk to Hermes over XMPP"
 omemo_install_hint: "pip install slixmpp-omemo"
