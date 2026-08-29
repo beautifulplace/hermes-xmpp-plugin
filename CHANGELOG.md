@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.1.5] - 2026-08-29
+
+### Fixed
+- **OMEMO startup crash caused by the 1.1.2 pruning fix.** The pruning added
+  in 1.1.2 removed the bot's stale own-device *keys* but left their IDs in the
+  device list. The OMEMO library's `SessionManager.create` iterates every
+  listed device and requires its `/namespaces` key, so any listed-but-keyless
+  device crashed OMEMO startup with `NothingException: Maybe.fromJust: Nothing`
+  — after which every encrypt/decrypt in that gateway process re-raised the
+  same cached failure and replies silently fell back to plaintext.
+  - `prune_stale_sessions()` now also removes stale IDs from the device list,
+    keeping the list and per-device keys consistent.
+  - New `sanitize_device_lists()` repair runs at plugin construction, before
+    the session manager builds: it drops dangling device-list entries that are
+    missing their per-device keys (repairing stores corrupted by 1.1.2-1.1.4)
+    and removes orphaned per-device keys that belong to no listed device.
+    Verified against a copy of the real corrupted store; idempotent.
+
 ## [1.1.4] - 2026-08-27
 
 ### Fixed
