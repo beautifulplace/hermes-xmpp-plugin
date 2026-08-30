@@ -4,15 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-xmpp-plugin"
-version = "1.1.0"
+version = "1.1.5"
 description = "XMPP gateway adapter for Hermes Agent with optional OMEMO encryption"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "beautifulplace"},
+    {name = "lobot"},
 ]
 maintainers = [
-    {name = "beautifulplace"},
+    {name = "lobot"},
 ]
 requires-python = ">=3.10"
 keywords = ["hermes", "xmpp", "omemo", "chatbot", "gateway", "messaging"]
