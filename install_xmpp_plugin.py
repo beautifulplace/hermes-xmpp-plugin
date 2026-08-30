@@ -43,13 +43,6 @@ DEPENDENCIES: list[tuple[str, str]] = [
     ("slixmpp-omemo", "slixmpp_omemo"),
 ]
 
-# Voice replies require ffmpeg to convert TTS MP3 output into M4A for
-# Conversations clients. It cannot be installed via pip, so we only check
-# for its presence and warn the user.
-SYSTEM_DEPENDENCIES: dict[str, str] = {
-    "ffmpeg": "converting TTS MP3 output to M4A for voice replies",
-}
-
 
 def fail(message: str) -> NoReturn:
     print(f"ERROR: {message}", file=sys.stderr)

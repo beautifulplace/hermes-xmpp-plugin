@@ -7,7 +7,7 @@ can be installed independently of the Hermes gateway's Python environment.
 import site  # noqa: I001
 from pathlib import Path  # noqa: I001
 
-__version__ = "1.1.0"
+__version__ = "1.1.5"
 
 _DEPS_DIR = Path(__file__).resolve().parent / "deps"
 if _DEPS_DIR.is_dir():
