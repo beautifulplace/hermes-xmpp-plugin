@@ -151,64 +151,129 @@ def _find_block_bounds(text: str, key: str) -> tuple[int, int]:
     return start, end
 
 
-def is_plugin_enabled(config_text: str) -> bool:
-    """Return True if platforms/xmpp is already in plugins.enabled."""
-    start, end = _find_block_bounds(config_text, "plugins")
-    if start < 0:
-        return False
-    block = "\n".join(config_text.splitlines()[start:end])
-    enabled_match = re.search(r"enabled:\s*\n((?:\s+-\s+.*\n?)+)", block)
+def _iter_plugin_blocks(config_text: str) -> list[tuple[int, int, list[str]]]:
+    """Return (start, end, block_lines) for every top-level 'plugins:' block.
+
+    Configs touched by older installers can carry duplicate 'plugins:' blocks
+    (e.g. an empty flow-style 'enabled: []' left by profile creation followed
+    by the installer's block). Block-scoped logic must consider all of them
+    because YAML's last-wins rule means later blocks shadow earlier ones.
+    """
+    lines = config_text.splitlines()
+    blocks: list[tuple[int, int, list[str]]] = []
+    pattern = re.compile(r"^plugins:\s*$")
+    for i, line in enumerate(lines):
+        if pattern.match(line):
+            start = i
+            end = len(lines)
+            for j in range(start + 1, len(lines)):
+                candidate = lines[j]
+                if candidate.strip() == "":
+                    continue
+                indent = len(candidate) - len(candidate.lstrip())
+                if indent == 0 and not candidate.lstrip().startswith("#"):
+                    end = j
+                    break
+            blocks.append((start, end, lines[start:end]))
+    return blocks
+
+
+def _parse_enabled_items(block_lines: list[str]) -> list[str]:
+    """Extract plugin names from a plugins block's enabled list.
+
+    Handles both block style and flow style ('enabled: []', '[a, b]').
+    Returns [] when the block has no enabled list or an empty one.
+    """
+    text = "\n".join(block_lines)
+    enabled_match = re.search(r"enabled:\s*\n((?:\s+-\s+.*)+)", text)
     if enabled_match:
-        items = re.findall(r"-\s+(\S+)", enabled_match.group(1))
-        return "platforms/xmpp" in items
-    # Flow-style list: enabled: [] or enabled: [a, b]
-    flow_match = re.search(r"enabled:\s*\[([^\]]*)\]", block)
+        return re.findall(r"-\s+(\S+)", enabled_match.group(1))
+    flow_match = re.search(r"enabled:\s*\[([^\]]*)\]", text)
     if flow_match:
-        items = [item.strip() for item in flow_match.group(1).split(",") if item.strip()]
-        return "platforms/xmpp" in items
-    return False
+        return [
+            item.strip().strip("\"'")
+            for item in flow_match.group(1).split(",")
+            if item.strip()
+        ]
+    return []
+
+
+def _all_enabled_items(config_text: str) -> list[str]:
+    """Union of enabled items across every plugins block."""
+    items: list[str] = []
+    for _start, _end, block_lines in _iter_plugin_blocks(config_text):
+        items.extend(_parse_enabled_items(block_lines))
+    return items
+
+
+def is_plugin_enabled(config_text: str) -> bool:
+    """Return True if platforms/xmpp is in plugins.enabled in any plugins block."""
+    return "platforms/xmpp" in _all_enabled_items(config_text)
 
 
 def enable_plugin(config_text: str) -> str:
     """Add platforms/xmpp to plugins.enabled, creating the block if needed.
 
-    If a platforms block exists, the plugins block is inserted immediately
-    before it so the enabled-platforms section sits near the platform
-    definitions. Otherwise it is appended to the end of the file.
+    With duplicate 'plugins:' blocks (e.g. an empty one left by profile
+    creation plus an installer-written one), YAML's last-wins rule applies,
+    so the item is appended to the LAST block's enabled list and stale
+    empty-list plugins blocks before it are dropped.
     """
     if is_plugin_enabled(config_text):
         return config_text
 
-    new_plugins_block = "plugins:\n  enabled:\n    - platforms/xmpp\n"
+    blocks = _iter_plugin_blocks(config_text)
+    if blocks:
+        lines = config_text.splitlines()
+        # Drop stale empty-list plugins blocks that precede the last one.
+        for start, end, block_lines in reversed(blocks[:-1]):
+            if not _parse_enabled_items(block_lines):
+                del lines[start:end]
 
-    # If an empty plugins.enabled block exists, fill it instead of duplicating.
-    # Handles both block style ("enabled:\n") and flow style ("enabled: []").
-    empty_block_match = re.search(
-        r"^plugins:\s*\n\s+enabled:\s*$",
-        config_text,
-        re.MULTILINE,
-    )
-    flow_empty_match = re.search(
-        r"^plugins:\s*\n\s+enabled:\s*\[\s*\]\s*$",
-        config_text,
-        re.MULTILINE,
-    )
-    if empty_block_match:
-        return re.sub(
-            r"^(plugins:\s*\n\s+enabled:)\s*$",
-            r"\1\n    - platforms/xmpp",
-            config_text,
-            count=1,
-            flags=re.MULTILINE,
-        )
-    if flow_empty_match:
-        return re.sub(
-            r"^plugins:\s*\n(\s+enabled):\s*\[\s*\]\s*$",
-            r"\1:\n    - platforms/xmpp",
-            config_text,
-            count=1,
-            flags=re.MULTILINE,
-        )
+        text = "\n".join(lines)
+        blocks = _iter_plugin_blocks(text)
+        start, end, block_lines = blocks[-1]
+        block = "\n".join(block_lines)
+        items = _parse_enabled_items(block_lines)
+
+        if re.search(r"^\s+enabled:\s*\n((?:\s+-\s+.*)+)", block):
+            # Block-style list: append using the existing item indent.
+            list_match = re.search(r"enabled:\s*\n((?:\s+-\s+.*)+)", block)
+            if list_match is None:  # pragma: no cover - verified by the branch test
+                raise AssertionError("unreachable: block-style list verified above")
+            indent = list_match.group(1)[: -len(list_match.group(1).lstrip())] or "    "
+            new_block = block.rstrip() + f"\n{indent}- platforms/xmpp"
+            lines[start:end] = new_block.splitlines()
+        elif items:
+            # Non-empty flow-style list: convert to block style.
+            rendered = "enabled:\n" + "\n".join(f"    - {item}" for item in items)
+            new_block = re.sub(
+                r"enabled:\s*\[[^\]]*\]", rendered, block, count=1
+            ).rstrip() + "\n    - platforms/xmpp"
+            lines[start:end] = new_block.splitlines()
+        elif re.search(r"^\s+enabled:\s*\[\s*\]\s*$", block, re.MULTILINE):
+            # Empty flow-style list: convert to block style with the new item.
+            new_block = re.sub(
+                r"enabled:\s*\[\s*\]",
+                "enabled:\n    - platforms/xmpp",
+                block,
+                count=1,
+                flags=re.MULTILINE,
+            )
+            lines[start:end] = new_block.splitlines()
+        elif re.search(r"^\s+enabled:\s*$", block, re.MULTILINE):
+            # Empty block-style list: fill it.
+            new_block = block.rstrip() + "\n    - platforms/xmpp"
+            lines[start:end] = new_block.splitlines()
+        else:
+            # plugins block without an enabled key: add one.
+            lines[start:end] = block_lines + ["  enabled:", "    - platforms/xmpp"]
+
+        result = "\n".join(lines)
+        result = re.sub(r"\n\n\n+", "\n\n", result).rstrip("\n")
+        return result + ("\n" if config_text.endswith("\n") else "\n")
+
+    new_plugins_block = "plugins:\n  enabled:\n    - platforms/xmpp\n"
 
     if re.search(r"^platforms:\s*$", config_text, re.MULTILINE):
         # Insert plugins block right before platforms block.
@@ -220,64 +285,53 @@ def enable_plugin(config_text: str) -> str:
             flags=re.MULTILINE,
         )
 
-    if re.search(r"^plugins:\s*$", config_text, re.MULTILINE):
-        # plugins block exists, ensure enabled list exists and append.
-        def repl(match: re.Match) -> str:
-            block = match.group(0)
-            enabled_match = re.search(r"enabled:\s*\n((?:\s+-\s+.*\n?)+)", block)
-            if enabled_match:
-                # Append to existing list.
-                list_body = enabled_match.group(1)
-                indent_match = re.search(r"^(\s+)-", list_body, re.MULTILINE)
-                indent = indent_match.group(1) if indent_match else "  "
-                return block.replace(
-                    list_body, list_body.rstrip() + f"\n{indent}- platforms/xmpp\n"
-                )
-            else:
-                return block.rstrip() + "\n  enabled:\n    - platforms/xmpp\n"
-
-        return re.sub(
-            r"^plugins:\s*\n(?:  .+\n?)*",
-            repl,
-            config_text,
-            count=1,
-            flags=re.MULTILINE,
-        )
-
     # Create plugins block at the end of file.
     return config_text.rstrip() + "\n\n" + new_plugins_block + "\n"
 
 
 def disable_plugin(config_text: str) -> str:
-    """Remove platforms/xmpp from plugins.enabled.
+    """Remove platforms/xmpp from plugins.enabled across ALL plugins blocks.
 
-    If the enabled list becomes empty, remove the plugins block too.
+    A config may contain duplicate 'plugins:' blocks (e.g. an empty one left
+    by profile creation); the item is removed wherever it appears. Blocks
+    whose enabled list is empty afterwards are dropped, so a stale empty-list
+    duplicate does not survive the uninstall. A config without
+    platforms/xmpp enabled anywhere is returned unchanged.
     """
-    start, end = _find_block_bounds(config_text, "plugins")
-    if start < 0:
+    blocks = _iter_plugin_blocks(config_text)
+    if not blocks:
         return config_text
-
-    block = "\n".join(config_text.splitlines()[start:end])
-    enabled_match = re.search(r"enabled:\s*\n((?:\s+-\s+.*\n?)+)", block)
-    if not enabled_match:
-        return config_text
-
-    list_body = enabled_match.group(1)
-    lines = list_body.splitlines()
-    filtered = [line for line in lines if not re.match(r"^\s*-\s+platforms/xmpp\s*$", line)]
-    if len(filtered) == len(lines):
-        return config_text
-
-    # Rebuild the enabled sub-block.
-    if filtered:
-        new_list = "\n".join(filtered) + "\n"
-        new_block = block.replace(enabled_match.group(1), new_list)
-    else:
-        # Drop the entire plugins block if enabled list is now empty.
-        new_block = ""
 
     lines = config_text.splitlines()
-    lines[start:end] = new_block.splitlines()
+    removed = False
+    # Process last-to-first so earlier indices stay valid after deletion.
+    for start, end, block_lines in reversed(blocks):
+        items = _parse_enabled_items(block_lines)
+        if "platforms/xmpp" not in items:
+            continue
+        removed = True
+        remaining = [
+            line
+            for line in block_lines
+            if not re.match(r"^\s*-\s+platforms/xmpp\s*$", line)
+        ]
+        if _parse_enabled_items(remaining):
+            lines[start:end] = remaining
+        else:
+            # Enabled list is now empty: drop the whole block.
+            del lines[start:end]
+
+    if not removed:
+        return config_text
+
+    # Drop any remaining plugins blocks with empty enabled lists
+    # (stale duplicates that no longer carry anything).
+    for start, end, block_lines in reversed(_iter_plugin_blocks("\n".join(lines))):
+        if not _parse_enabled_items(block_lines) and re.search(
+            r"^\s+enabled:", "\n".join(block_lines), re.MULTILINE
+        ):
+            del lines[start:end]
+
     result = "\n".join(lines)
     # Remove any double blank lines left by removing a block.
     result = re.sub(r"\n\n\n+", "\n\n", result)

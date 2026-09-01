@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.1.7] - 2026-08-31
+
+### Fixed
+- **Uninstaller failed to disable the plugin on configs with duplicate
+  `plugins:` blocks.** `disable_plugin()` only inspected the first
+  `plugins:` block, so a stale empty `enabled: []` block left by profile
+  creation shadowed the installer-written one: the enabled list kept
+  `platforms/xmpp` (piling up duplicates across reinstall cycles) even though
+  the config looked clean. `enable_plugin()`, `is_plugin_enabled()` and
+  `disable_plugin()` now iterate every `plugins:` block: the enabled item is
+  added to / removed from the block that actually wins (last-wins), stale
+  empty-list blocks are dropped, and uninstall leaves no empty duplicates.
+
 ## [1.1.6] - 2026-08-31
 
 ### Added

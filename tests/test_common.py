@@ -187,3 +187,117 @@ def test_append_env_credentials_updates_existing_allowed_users(tmp_path):
         env_path, "bot@x.com", "pw", allowed_users="new@x.com,other@y.net"
     )
     assert env_path.read_text() == text
+
+
+def test_disable_plugin_luna_shape_duplicate_plugins_blocks():
+    """Luna's config: stale empty flow-style block + installer block.
+
+    disable_plugin must remove the item from the LAST (winning) block and
+    drop stale empty-list blocks, not be fooled by the first empty block.
+    """
+    config = (
+        "model:\n"
+        "  default: glm-5.3-flash:cloud\n"
+        "plugins:\n"
+        "  enabled: []\n"
+        "_config_version: 39\n"
+        "plugins:\n"
+        "  enabled:\n"
+        "    - platforms/xmpp\n"
+        "\n"
+        "platforms:\n"
+        "  xmpp:\n"
+        "    enabled: true\n"
+    )
+    result = disable_plugin(config)
+    from hermes_xmpp_plugin_common import is_plugin_enabled
+
+    assert not is_plugin_enabled(result)
+    assert "platforms/xmpp" not in result
+    # The stale empty flow-style block is dropped too.
+    assert result.count("plugins:") == 0
+
+
+def test_enable_plugin_luna_shape_deduplicates_stale_block():
+    """enable_plugin fills the last real block and removes a stale empty duplicate."""
+    config = (
+        "model:\n"
+        "  default: glm\n"
+        "plugins:\n"
+        "  enabled: []\n"
+        "_config_version: 39\n"
+        "plugins:\n"
+        "  enabled:\n"
+        "    - other/plugin\n"
+        "\n"
+        "platforms:\n"
+        "  other:\n"
+        "    enabled: true\n"
+    )
+    result = enable_plugin(config)
+    from hermes_xmpp_plugin_common import is_plugin_enabled
+
+    assert is_plugin_enabled(result)
+    assert result.count("plugins:") == 1
+    # other/plugin preserved, xmpp appended after it.
+    assert "other/plugin" in result and "platforms/xmpp" in result
+
+
+def test_disable_plugin_preserves_nonempty_other_blocks():
+    """Uninstall must not drop a plugins block that still lists other plugins."""
+    config = (
+        "plugins:\n"
+        "  enabled: []\n"
+        "plugins:\n"
+        "  enabled:\n"
+        "    - platforms/xmpp\n"
+        "    - other/plugin\n"
+    )
+    result = disable_plugin(config)
+    from hermes_xmpp_plugin_common import is_plugin_enabled
+
+    assert not is_plugin_enabled(result)
+    assert "other/plugin" in result
+    assert "platforms/xmpp" not in result
+
+
+def test_enable_disable_roundtrip_luna_shape():
+    """Full cycle on the duplicate-block shape ends with one clean block.
+
+    Mirrors the installer sequence: enable_plugin + add_default_xmpp_config,
+    then the uninstaller sequence: disable_plugin + remove_xmpp_config.
+    """
+    config = (
+        "model:\n"
+        "  default: glm\n"
+        "plugins:\n"
+        "  enabled: []\n"
+        "_config_version: 39\n"
+        "platforms:\n"
+        "  xmpp:\n"
+        "    enabled: false\n"
+    )
+    from hermes_xmpp_plugin_common import (
+        add_default_xmpp_config,
+        is_plugin_enabled,
+        remove_xmpp_config,
+    )
+
+    # Install sequence.
+    enabled = enable_plugin(config)
+    enabled = add_default_xmpp_config(enabled)
+    assert enabled.count("plugins:") == 1
+    assert is_plugin_enabled(enabled)
+    import yaml
+
+    parsed = yaml.safe_load(enabled)
+    assert parsed["platforms"]["xmpp"]["enabled"] is True
+    assert parsed["plugins"]["enabled"] == ["platforms/xmpp"]
+
+    # Uninstall sequence.
+    disabled = disable_plugin(enabled)
+    disabled = remove_xmpp_config(disabled)
+    assert not is_plugin_enabled(disabled)
+    assert disabled.count("plugins:") == 0
+    parsed = yaml.safe_load(disabled)
+    assert "xmpp" not in (parsed.get("platforms") or {})
