@@ -127,6 +127,13 @@ Every `platforms.xmpp` option can also be set via an environment variable:
 | `XMPP_ALLOWED_USERS` | Comma-separated JIDs allowed to message the bot (default: none, deny all) |
 | `XMPP_ALLOW_ALL_USERS` | Allow any user to message the bot (default: false) |
 
+> **Security note:** if you do not set `XMPP_ALLOWED_USERS`, any user who can
+> reach your agent over XMPP will be able to talk to it. To restrict access,
+> set `XMPP_ALLOWED_USERS` to a comma-separated allowlist. To explicitly open
+> the bot to everyone, set `allow_all_users: true` in `config.yaml` (or
+> `XMPP_ALLOW_ALL_USERS=true` in `.env`). The installer prompts for this
+> explicitly rather than silently opening the agent to all users.
+
 ## Voice and Audio
 
 The installer sets up the default voice and audio configuration automatically:

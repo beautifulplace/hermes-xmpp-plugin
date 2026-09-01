@@ -118,6 +118,7 @@ def install_dependencies(
 def enable_plugin_in_config(
     config_path: Path,
     add_defaults: bool,
+    allow_all_users: bool = False,
 ) -> None:
     if not config_path.exists():
         print(f"Config not found at {config_path}; creating minimal config")
@@ -128,7 +129,7 @@ def enable_plugin_in_config(
 
     config_text = enable_plugin(config_text)
     if add_defaults:
-        config_text = add_default_xmpp_config(config_text)
+        config_text = add_default_xmpp_config(config_text, allow_all_users=allow_all_users)
         config_text = add_voice_and_stt_defaults(config_text)
 
     config_path.write_text(config_text)
@@ -200,10 +201,14 @@ def prompt_xmpp_credentials(
     args: argparse.Namespace,
     env_path: Path,
 ):
-    """Return (jid, password, avatar_path, allowed_users), prompting for missing values.
+    """Return (jid, password, avatar_path, allowed_users, allow_all_users).
 
     If the Hermes .env file already contains XMPP_USER_JID or XMPP_PASSWORD,
     those values are shown as defaults; the user can press Enter to keep them.
+
+    ``allow_all_users`` is True only when the user explicitly opted to allow
+    every sender (no allowlist). Leaving the allowlist blank without that
+    explicit opt-in does NOT silently open the bot to everyone.
     """
     defaults = _load_env_credentials(env_path)
 
@@ -244,26 +249,39 @@ def prompt_xmpp_credentials(
         print(
             "\nAllowed users (who may talk to this bot). Comma-separated XMPP JIDs."
         )
-        if default_allowed:
-            print("Without this list the gateway denies every sender.")
-        else:
-            print("Without this list the gateway denies every sender; you can")
-            print("add XMPP_ALLOWED_USERS to the profile .env later.")
+        print(
+            "IMPORTANT: if you do not set an allowlist, ANY user who can reach "
+            "your agent over XMPP will be able to talk to it."
+        )
         prompt = (
             f"Allowed user JIDs [{default_allowed}]: "
             if default_allowed
-            else "Allowed user JIDs (comma-separated, blank to skip): "
+            else "Allowed user JIDs (comma-separated, blank to allow everyone): "
         )
         raw = input(prompt).strip()
         if not raw:
             raw = default_allowed
         allowed_users = normalize_allowed_users(raw)
+
+    allow_all_users = False
     if not allowed_users:
+        # No allowlist: require an explicit opt-in to allow all users rather
+        # than silently opening the bot to every sender.
         print(
-            "WARNING: no allowed users configured. The gateway will deny all "
-            "senders unless you set XMPP_ALLOWED_USERS (or XMPP_ALLOW_ALL_USERS=true) "
-            "in the profile .env."
+            "\nNo allowed users were set. If you leave it this way, ANY user "
+            "who can reach your agent over XMPP will be able to talk to it."
         )
+        while True:
+            choice = input(
+                "Allow ALL users to talk to this agent? (yes/no): "
+            ).strip().lower()
+            if choice in ("yes", "y"):
+                allow_all_users = True
+                break
+            if choice in ("no", "n"):
+                allow_all_users = False
+                break
+            print("Please answer yes or no.")
 
     avatar_path = args.avatar_path or ""
     if not avatar_path:
@@ -276,7 +294,7 @@ def prompt_xmpp_credentials(
 
     avatar_path = prompt_for_avatar(avatar_path)
 
-    return jid, password, avatar_path, allowed_users
+    return jid, password, avatar_path, allowed_users, allow_all_users
 
 
 def append_env_credentials(
@@ -285,12 +303,15 @@ def append_env_credentials(
     password: str,
     avatar_path: str = "",
     allowed_users: str = "",
+    allow_all_users: bool = False,
 ) -> None:
     """Append credentials and avatar path to the Hermes .env file if not already present.
 
     Stores XMPP_JID, XMPP_PASSWORD, and XMPP_AVATAR_PATH. Never writes secrets to config.yaml.
     XMPP_ALLOWED_USERS is upserted (existing value updated in place) so reinstalling
     with a new allowlist takes effect without manual .env editing.
+    XMPP_ALLOW_ALL_USERS is written only when the user explicitly opted to allow
+    every sender (no allowlist).
     """
     lines: list[str] = []
     if env_path.exists():
@@ -310,8 +331,25 @@ def append_env_credentials(
 
     if allowed_users:
         lines, upserted = _upsert_env_line(lines, "XMPP_ALLOWED_USERS", allowed_users)
+        # An explicit allowlist must not be silently defeated by a stale
+        # allow-all flag from a previous install. Clear it so the allowlist
+        # actually takes effect.
+        lines, cleared = _upsert_env_line(lines, "XMPP_ALLOW_ALL_USERS", "false")
+        upserted = upserted or cleared
     else:
         upserted = False
+
+    if allow_all_users:
+        lines, allow_all_upserted = _upsert_env_line(
+            lines, "XMPP_ALLOW_ALL_USERS", "true"
+        )
+        upserted = upserted or allow_all_upserted
+    elif not allowed_users:
+        # No allowlist and not allow-all: clear any stale allow-all flag from a
+        # previous install so the bot defaults to deny-all rather than silently
+        # staying open to every sender.
+        lines, cleared = _upsert_env_line(lines, "XMPP_ALLOW_ALL_USERS", "false")
+        upserted = upserted or cleared
 
     if additions:
         body = (lines + additions) if (env_path.exists() or lines) else additions
@@ -323,6 +361,8 @@ def append_env_credentials(
         print(f"Appended credentials to {env_path}")
     if allowed_users:
         print(f"Allowed users written to {env_path}: XMPP_ALLOWED_USERS={allowed_users}")
+    if allow_all_users:
+        print(f"Allow-all-users written to {env_path}: XMPP_ALLOW_ALL_USERS=true")
 
 
 def _env_text_changed(env_path: Path, lines: list[str]) -> bool:
@@ -402,6 +442,15 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--allow-all-users",
+        action="store_true",
+        help=(
+            "Allow every user to talk to the bot (no allowlist). Sets "
+            "XMPP_ALLOW_ALL_USERS=true and allow_all_users: true in config.yaml. "
+            "Use only if you explicitly want to open the agent to all senders."
+        ),
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Overwrite an existing plugin installation",
@@ -454,6 +503,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     password = ""
     avatar_path = ""
     allowed_users = ""
+    allow_all_users = False
     if not args.no_defaults:
         if args.non_interactive:
             if not args.jid or not args.password:
@@ -465,9 +515,10 @@ def main(argv: Optional[list[str]] = None) -> int:
             if avatar_path and not ok:
                 fail(msg)
             allowed_users = normalize_allowed_users(args.allowed_users or "")
+            allow_all_users = bool(args.allow_all_users)
         else:
-            jid, password, avatar_path, allowed_users = prompt_xmpp_credentials(
-                args, env_path
+            jid, password, avatar_path, allowed_users, allow_all_users = (
+                prompt_xmpp_credentials(args, env_path)
             )
 
     copy_plugin(plugin_src, plugin_dest, force=args.force)
@@ -483,6 +534,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     enable_plugin_in_config(
         config_path,
         add_defaults=not args.no_defaults,
+        allow_all_users=allow_all_users,
     )
 
     if not args.no_defaults and jid and password:
@@ -492,6 +544,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             password,
             avatar_path=avatar_path,
             allowed_users=allowed_users,
+            allow_all_users=allow_all_users,
         )
         print("  XMPP credentials stored in .env (not config.yaml).")
 

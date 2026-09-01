@@ -189,6 +189,70 @@ def test_append_env_credentials_updates_existing_allowed_users(tmp_path):
     assert env_path.read_text() == text
 
 
+def test_add_default_xmpp_config_allow_all_users():
+    """allow_all_users=True writes allow_all_users: true in the default block."""
+    result = add_default_xmpp_config("", allow_all_users=True)
+    assert "allow_all_users: true" in result
+    assert "allow_all_users: false" not in result
+
+
+def test_add_default_xmpp_config_default_denies():
+    """Default (no explicit opt-in) writes allow_all_users: false."""
+    result = add_default_xmpp_config("")
+    assert "allow_all_users: false" in result
+
+
+def test_add_default_xmpp_config_upserts_existing_block():
+    """An existing xmpp block gets allow_all_users upserted in place."""
+    config = (
+        "platforms:\n"
+        "  xmpp:\n"
+        "    enabled: false\n"
+        "    omemo_enabled: true\n"
+    )
+    result = add_default_xmpp_config(config, allow_all_users=True)
+    assert "enabled: true" in result
+    assert "allow_all_users: true" in result
+    assert "omemo_enabled: true" in result
+
+
+def test_append_env_credentials_writes_allow_all(tmp_path):
+    """allow_all_users=True writes XMPP_ALLOW_ALL_USERS=true."""
+    import install_xmpp_plugin as inst
+
+    env_path = tmp_path / ".env"
+    inst.append_env_credentials(
+        env_path, "bot@x.com", "pw", allow_all_users=True
+    )
+    text = env_path.read_text()
+    assert 'XMPP_ALLOW_ALL_USERS="true"' in text
+
+
+def test_append_env_credentials_allowlist_clears_stale_allow_all(tmp_path):
+    """An explicit allowlist clears a stale allow-all flag from a prior install."""
+    import install_xmpp_plugin as inst
+
+    env_path = tmp_path / ".env"
+    env_path.write_text('XMPP_ALLOW_ALL_USERS="true"\n')
+    inst.append_env_credentials(
+        env_path, "bot@x.com", "pw", allowed_users="a@x.com"
+    )
+    text = env_path.read_text()
+    assert 'XMPP_ALLOWED_USERS="a@x.com"' in text
+    assert 'XMPP_ALLOW_ALL_USERS="false"' in text
+
+
+def test_append_env_credentials_no_allowlist_clears_stale_allow_all(tmp_path):
+    """No allowlist and no allow-all clears a stale allow-all flag (deny-all)."""
+    import install_xmpp_plugin as inst
+
+    env_path = tmp_path / ".env"
+    env_path.write_text('XMPP_ALLOW_ALL_USERS="true"\n')
+    inst.append_env_credentials(env_path, "bot@x.com", "pw")
+    text = env_path.read_text()
+    assert 'XMPP_ALLOW_ALL_USERS="false"' in text
+
+
 def test_disable_plugin_luna_shape_duplicate_plugins_blocks():
     """Luna's config: stale empty flow-style block + installer block.
 

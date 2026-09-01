@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.1.8] - 2026-09-01
+
+### Changed
+- **Installer now explains the allowlist security implication and requires an
+  explicit opt-in to allow all users.** The allowed-users prompt now states
+  that leaving the allowlist empty lets ANY user who can reach the agent over
+  XMPP talk to it. When no allowlist is entered, the installer asks a
+  yes/no "Allow ALL users to talk to this agent?" question; only an explicit
+  "yes" sets `allow_all_users: true` in `config.yaml` and
+  `XMPP_ALLOW_ALL_USERS=true` in `.env`. Answering "no" (or leaving it blank)
+  keeps the bot deny-all by default. A `--allow-all-users` flag covers
+  non-interactive installs.
+- **`allow_all_users` / `allowed_users` config keys are now bridged to the
+  gateway authorization env vars.** The adapter's `_apply_yaml_config` maps
+  `allow_all_users` → `XMPP_ALLOW_ALL_USERS` and `allowed_users` →
+  `XMPP_ALLOWED_USERS` (env wins when already set), so `config.yaml` is the
+  source of truth for access control.
+- **Reinstall clears a stale allow-all flag.** When the user now provides an
+  allowlist (or opts out of allow-all), a leftover `XMPP_ALLOW_ALL_USERS=true`
+  from a previous install is reset to `false` so the new choice takes effect.
+
 ## [1.1.7] - 2026-08-31
 
 ### Fixed

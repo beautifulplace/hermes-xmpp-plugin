@@ -1727,6 +1727,14 @@ _XMPP_YAML_KEYS = (
 
 def _apply_yaml_config(yaml_cfg: dict, platform_cfg: dict) -> Optional[dict]:
     seeded = {k: platform_cfg[k] for k in _XMPP_YAML_KEYS if k in platform_cfg}
+    # Bridge the allowlist / allow-all config keys to the env vars the gateway
+    # authorization layer reads (XMPP_ALLOWED_USERS / XMPP_ALLOW_ALL_USERS), so
+    # config.yaml is the source of truth for access control. Env vars win when
+    # already set (env > YAML precedence).
+    if "allow_all_users" in platform_cfg and not os.getenv("XMPP_ALLOW_ALL_USERS"):
+        os.environ["XMPP_ALLOW_ALL_USERS"] = str(platform_cfg["allow_all_users"]).lower()
+    if "allowed_users" in platform_cfg and not os.getenv("XMPP_ALLOWED_USERS"):
+        os.environ["XMPP_ALLOWED_USERS"] = str(platform_cfg["allowed_users"])
     return seeded if seeded else None
 
 

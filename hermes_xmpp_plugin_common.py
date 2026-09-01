@@ -338,12 +338,15 @@ def disable_plugin(config_text: str) -> str:
     return result.rstrip() + "\n"
 
 
-def add_default_xmpp_config(config_text: str) -> str:
+def add_default_xmpp_config(config_text: str, allow_all_users: bool = False) -> str:
     """Add a default platforms.xmpp block if one does not exist.
 
     Credentials are intentionally NOT written into config.yaml; they are stored
-    in the Hermes .env file instead.
+    in the Hermes .env file instead. ``allow_all_users`` reflects the user's
+    explicit choice during install: True means the user opted to allow every
+    sender (no allowlist), False means an allowlist is expected.
     """
+    allow_all = "true" if allow_all_users else "false"
     if re.search(r"^platforms:\s*$", config_text, re.MULTILINE):
         # platforms block exists.
         start, end = _find_block_bounds(config_text, "platforms")
@@ -351,20 +354,22 @@ def add_default_xmpp_config(config_text: str) -> str:
         if re.search(r"^\s+xmpp:\s*$", block, re.MULTILINE):
             # An xmpp block exists. If it was left disabled (profile default
             # "enabled: false" on fresh profiles), flip it on so the freshly
-            # installed plugin actually starts.
-            return re.sub(
+            # installed plugin actually starts, and upsert allow_all_users to
+            # reflect the user's explicit choice.
+            result = re.sub(
                 r"^(\s+xmpp:\s*\n\s+enabled:\s*)false\s*$",
                 r"\1true",
                 config_text,
                 count=1,
                 flags=re.MULTILINE,
             )
+            return _upsert_xmpp_allow_all_users(result, allow_all)
 
-        default_xmpp = """\n  xmpp:
+        default_xmpp = f"""\n  xmpp:
     enabled: true
     omemo_enabled: true
     omemo_allow_untrusted: true
-    allow_all_users: false
+    allow_all_users: {allow_all}
 """
         return re.sub(
             r"^(platforms:\s*\n(?:  .+\n?)*)",
@@ -374,14 +379,51 @@ def add_default_xmpp_config(config_text: str) -> str:
             flags=re.MULTILINE,
         )
 
-    default_block = """platforms:
+    default_block = f"""platforms:
   xmpp:
     enabled: true
     omemo_enabled: true
     omemo_allow_untrusted: true
-    allow_all_users: false
+    allow_all_users: {allow_all}
 """
     return config_text.rstrip() + "\n\n" + default_block + "\n"
+
+
+def _upsert_xmpp_allow_all_users(config_text: str, allow_all: str) -> str:
+    """Set allow_all_users within an existing platforms.xmpp block.
+
+    Replaces the value in place when the key is present, otherwise appends it
+    after the last key in the xmpp block. Returns config_text unchanged when
+    no xmpp block is found.
+    """
+    match = re.search(r"^(\s*)xmpp:\s*$", config_text, re.MULTILINE)
+    if not match:
+        return config_text
+    indent = match.group(1)
+    lines = config_text.splitlines()
+    start = config_text[: match.start()].count("\n")
+    xmpp_indent = len(indent)
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        line = lines[i]
+        if line.strip() == "":
+            continue
+        if len(line) - len(line.lstrip()) <= xmpp_indent:
+            end = i
+            break
+    block = "\n".join(lines[start:end])
+    if re.search(rf"^{indent}\s+allow_all_users:", block, re.MULTILINE):
+        block = re.sub(
+            rf"^({indent}\s+allow_all_users:\s*).*$",
+            lambda m: m.group(1) + allow_all,
+            block,
+            count=1,
+            flags=re.MULTILINE,
+        )
+    else:
+        block = block.rstrip() + f"\n{indent}  allow_all_users: {allow_all}"
+    lines[start:end] = block.splitlines()
+    return "\n".join(lines)
 
 
 
