@@ -304,14 +304,18 @@ def append_env_credentials(
     avatar_path: str = "",
     allowed_users: str = "",
     allow_all_users: bool = False,
+    home_channel: str = "",
 ) -> None:
     """Append credentials and avatar path to the Hermes .env file if not already present.
 
-    Stores XMPP_JID, XMPP_PASSWORD, and XMPP_AVATAR_PATH. Never writes secrets to config.yaml.
+    Stores XMPP_USER_JID, XMPP_PASSWORD, and XMPP_AVATAR_PATH. Never writes secrets to config.yaml.
     XMPP_ALLOWED_USERS is upserted (existing value updated in place) so reinstalling
     with a new allowlist takes effect without manual .env editing.
     XMPP_ALLOW_ALL_USERS is written only when the user explicitly opted to allow
     every sender (no allowlist).
+    XMPP_HOME_CHANNEL is seeded from the first allowed user (cron/restart
+    notification target) unless it is already set in .env — an existing value
+    (or one set later via /sethome) always wins.
     """
     lines: list[str] = []
     if env_path.exists():
@@ -350,6 +354,13 @@ def append_env_credentials(
         # staying open to every sender.
         lines, cleared = _upsert_env_line(lines, "XMPP_ALLOW_ALL_USERS", "false")
         upserted = upserted or cleared
+
+    # Seed the cron/restart-notification home target from the first allowed
+    # user so the bot has a delivery target without /sethome. Never overwrite
+    # an existing XMPP_HOME_CHANNEL (install-time choice or /sethome result).
+    if home_channel and "XMPP_HOME_CHANNEL" not in existing_keys:
+        lines, seeded = _upsert_env_line(lines, "XMPP_HOME_CHANNEL", home_channel)
+        upserted = upserted or seeded
 
     if additions:
         body = (lines + additions) if (env_path.exists() or lines) else additions
@@ -538,6 +549,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
 
     if not args.no_defaults and jid and password:
+        # Seed the .env home channel from the first allowed user so cron
+        # delivery and restart notifications work without /sethome. Empty
+        # allowlist -> no seed (there is no sensible default target).
+        first_allowed = allowed_users.split(",")[0].strip() if allowed_users else ""
         append_env_credentials(
             env_path,
             jid,
@@ -545,7 +560,10 @@ def main(argv: Optional[list[str]] = None) -> int:
             avatar_path=avatar_path,
             allowed_users=allowed_users,
             allow_all_users=allow_all_users,
+            home_channel=first_allowed,
         )
+        if first_allowed:
+            print(f"  Home channel seeded from first allowed user: XMPP_HOME_CHANNEL={first_allowed}")
         print("  XMPP credentials stored in .env (not config.yaml).")
 
     print("\nInstallation complete.")

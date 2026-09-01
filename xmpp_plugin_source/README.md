@@ -65,7 +65,7 @@ XMPP_PASSWORD="hermes-password"
 | `XMPP_OMEMO_ENABLED` | Enable OMEMO (default: true) |
 | `XMPP_OMEMO_ALLOW_UNTRUSTED` | Auto-trust new OMEMO devices (default: true) |
 | `XMPP_AVATAR_PATH` | Path to an avatar image (optional) |
-| `XMPP_HOME_CHANNEL` | Default JID for cron / notifications |
+| `XMPP_HOME_CHANNEL` | Default JID for cron / notifications. Seeded automatically at install from the first `XMPP_ALLOWED_USERS` entry; existing value wins. |
 | `XMPP_ALLOW_ALL_USERS` | Allow any user to message the bot (default: false) |
 
 ## OMEMO End-to-End Encryption

@@ -253,6 +253,48 @@ def test_append_env_credentials_no_allowlist_clears_stale_allow_all(tmp_path):
     assert 'XMPP_ALLOW_ALL_USERS="false"' in text
 
 
+def test_append_env_credentials_seeds_home_channel_from_first_allowed(tmp_path):
+    """Fresh install seeds XMPP_HOME_CHANNEL from the first allowed user."""
+    import install_xmpp_plugin as inst
+
+    env_path = tmp_path / ".env"
+    inst.append_env_credentials(
+        env_path, "bot@x.com", "pw", allowed_users="a@x.com,b@y.net",
+        home_channel="a@x.com",
+    )
+    text = env_path.read_text()
+    assert 'XMPP_HOME_CHANNEL="a@x.com"' in text
+
+
+def test_append_env_credentials_existing_home_channel_wins(tmp_path):
+    """An existing XMPP_HOME_CHANNEL (user- or /sethome-set) is never overwritten."""
+    import install_xmpp_plugin as inst
+
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        'XMPP_USER_JID="bot@x.com"\n'
+        'XMPP_PASSWORD="pw"\n'
+        'XMPP_HOME_CHANNEL="original@x.com"\n'
+    )
+    inst.append_env_credentials(
+        env_path, "bot@x.com", "pw", allowed_users="a@x.com",
+        home_channel="a@x.com",
+    )
+    text = env_path.read_text()
+    assert 'XMPP_HOME_CHANNEL="original@x.com"' in text
+    assert text.count("XMPP_HOME_CHANNEL") == 1
+
+
+def test_append_env_credentials_no_allowlist_no_home_seed(tmp_path):
+    """Empty allowlist -> no XMPP_HOME_CHANNEL seed."""
+    import install_xmpp_plugin as inst
+
+    env_path = tmp_path / ".env"
+    inst.append_env_credentials(env_path, "bot@x.com", "pw", home_channel="")
+    text = env_path.read_text()
+    assert "XMPP_HOME_CHANNEL" not in text
+
+
 def test_disable_plugin_luna_shape_duplicate_plugins_blocks():
     """Luna's config: stale empty flow-style block + installer block.
 

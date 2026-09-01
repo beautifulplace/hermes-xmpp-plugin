@@ -123,9 +123,17 @@ Every `platforms.xmpp` option can also be set via an environment variable:
 | `XMPP_OMEMO_ENABLED` | Enable OMEMO (default: true) |
 | `XMPP_OMEMO_ALLOW_UNTRUSTED` | Auto-trust new OMEMO devices (default: true) |
 | `XMPP_AVATAR_PATH` | Path to an avatar image (optional) |
-| `XMPP_HOME_CHANNEL` | Default JID for cron / notifications |
+| `XMPP_HOME_CHANNEL` | Default JID for cron / notifications. **Seeded automatically at install** from the first entry of `XMPP_ALLOWED_USERS`; an existing value (or one set later via `/sethome`) always wins. |
 | `XMPP_ALLOWED_USERS` | Comma-separated JIDs allowed to message the bot (default: none, deny all) |
 | `XMPP_ALLOW_ALL_USERS` | Allow any user to message the bot (default: false) |
+
+> **Home channel note:** cron delivery and restart notifications need a home
+> target. The installer seeds `XMPP_HOME_CHANNEL` in `.env` from the first
+> allowlisted JID so no manual step is required. If the allowlist is empty,
+> nothing is seeded; use `/sethome` in a chat with the bot, or set the
+> variable in `.env` yourself. `/sethome` also records the home channel in
+> `config.yaml` (that is core Hermes behavior for every platform); the `.env`
+> value is what the installer and the legacy env fallback read.
 
 > **Security note:** if you do not set `XMPP_ALLOWED_USERS`, any user who can
 > reach your agent over XMPP will be able to talk to it. To restrict access,

@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.0] - 2026-09-01
+
+### Added
+- **The installer now seeds `XMPP_HOME_CHANNEL` in `.env` from the first
+  allowed user**, so cron delivery and restart notifications have a target
+  without running `/sethome`. An existing `XMPP_HOME_CHANNEL` (set by a
+  previous install or by `/sethome`) is never overwritten; an empty
+  allowlist seeds nothing. Documented in both READMEs.
+
 ## [1.1.9] - 2026-09-01
 
 ### Added
