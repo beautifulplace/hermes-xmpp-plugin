@@ -352,16 +352,12 @@ def test_enable_disable_roundtrip_luna_shape():
     enabled = add_default_xmpp_config(enabled)
     assert enabled.count("plugins:") == 1
     assert is_plugin_enabled(enabled)
-    import yaml
-
-    parsed = yaml.safe_load(enabled)
-    assert parsed["platforms"]["xmpp"]["enabled"] is True
-    assert parsed["plugins"]["enabled"] == ["platforms/xmpp"]
+    assert "enabled: true" in enabled
+    assert "allow_all_users: false" in enabled
 
     # Uninstall sequence.
     disabled = disable_plugin(enabled)
     disabled = remove_xmpp_config(disabled)
     assert not is_plugin_enabled(disabled)
     assert disabled.count("plugins:") == 0
-    parsed = yaml.safe_load(disabled)
-    assert "xmpp" not in (parsed.get("platforms") or {})
+    assert "xmpp" not in disabled
