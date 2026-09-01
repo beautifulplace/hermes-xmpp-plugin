@@ -158,10 +158,15 @@ def is_plugin_enabled(config_text: str) -> bool:
         return False
     block = "\n".join(config_text.splitlines()[start:end])
     enabled_match = re.search(r"enabled:\s*\n((?:\s+-\s+.*\n?)+)", block)
-    if not enabled_match:
-        return False
-    items = re.findall(r"-\s+(\S+)", enabled_match.group(1))
-    return "platforms/xmpp" in items
+    if enabled_match:
+        items = re.findall(r"-\s+(\S+)", enabled_match.group(1))
+        return "platforms/xmpp" in items
+    # Flow-style list: enabled: [] or enabled: [a, b]
+    flow_match = re.search(r"enabled:\s*\[([^\]]*)\]", block)
+    if flow_match:
+        items = [item.strip() for item in flow_match.group(1).split(",") if item.strip()]
+        return "platforms/xmpp" in items
+    return False
 
 
 def enable_plugin(config_text: str) -> str:
@@ -177,8 +182,14 @@ def enable_plugin(config_text: str) -> str:
     new_plugins_block = "plugins:\n  enabled:\n    - platforms/xmpp\n"
 
     # If an empty plugins.enabled block exists, fill it instead of duplicating.
+    # Handles both block style ("enabled:\n") and flow style ("enabled: []").
     empty_block_match = re.search(
         r"^plugins:\s*\n\s+enabled:\s*$",
+        config_text,
+        re.MULTILINE,
+    )
+    flow_empty_match = re.search(
+        r"^plugins:\s*\n\s+enabled:\s*\[\s*\]\s*$",
         config_text,
         re.MULTILINE,
     )
@@ -186,6 +197,14 @@ def enable_plugin(config_text: str) -> str:
         return re.sub(
             r"^(plugins:\s*\n\s+enabled:)\s*$",
             r"\1\n    - platforms/xmpp",
+            config_text,
+            count=1,
+            flags=re.MULTILINE,
+        )
+    if flow_empty_match:
+        return re.sub(
+            r"^plugins:\s*\n(\s+enabled):\s*\[\s*\]\s*$",
+            r"\1:\n    - platforms/xmpp",
             config_text,
             count=1,
             flags=re.MULTILINE,
@@ -276,7 +295,16 @@ def add_default_xmpp_config(config_text: str) -> str:
         start, end = _find_block_bounds(config_text, "platforms")
         block = "\n".join(config_text.splitlines()[start:end])
         if re.search(r"^\s+xmpp:\s*$", block, re.MULTILINE):
-            return config_text
+            # An xmpp block exists. If it was left disabled (profile default
+            # "enabled: false" on fresh profiles), flip it on so the freshly
+            # installed plugin actually starts.
+            return re.sub(
+                r"^(\s+xmpp:\s*\n\s+enabled:\s*)false\s*$",
+                r"\1true",
+                config_text,
+                count=1,
+                flags=re.MULTILINE,
+            )
 
         default_xmpp = """\n  xmpp:
     enabled: true

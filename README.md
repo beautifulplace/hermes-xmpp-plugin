@@ -34,7 +34,7 @@ Run the installer:
 python3 install_xmpp_plugin.py
 ```
 
-You will be prompted for your XMPP JID, password, and an optional avatar path. The installer writes these to your Hermes `.env` file so reinstalls do not require retyping.
+You will be prompted for your XMPP JID, password, an optional avatar path, and the comma-separated JIDs of users allowed to talk to the bot. The installer writes these to your Hermes `.env` file so reinstalls do not require retyping. The allowed-users list is stored as `XMPP_ALLOWED_USERS`; without it the gateway denies every sender.
 
 1. Copy the plugin to `~/.hermes/plugins/platforms/xmpp/`
 2. Enable it in `config.yaml`
@@ -72,7 +72,8 @@ For CI or headless setups, pass `--non-interactive` with `--jid` and `--password
 python3 install_xmpp_plugin.py \
   --non-interactive \
   --jid "hermes@example.com" \
-  --password "hermes-password"
+  --password "hermes-password" \
+  --allowed-users "you@example.com"
 ```
 
 ### Disable OMEMO encryption
@@ -106,6 +107,7 @@ All install-specific settings (credentials, home channel, and avatar path) are s
 # ~/.hermes/.env
 XMPP_USER_JID="hermes@example.com"
 XMPP_PASSWORD="hermes-password"
+XMPP_ALLOWED_USERS="you@example.com,friend@example.net"
 XMPP_HOME_CHANNEL="you@example.com"
 XMPP_AVATAR_PATH="/path/to/avatar.png"
 ```
@@ -122,6 +124,7 @@ Every `platforms.xmpp` option can also be set via an environment variable:
 | `XMPP_OMEMO_ALLOW_UNTRUSTED` | Auto-trust new OMEMO devices (default: true) |
 | `XMPP_AVATAR_PATH` | Path to an avatar image (optional) |
 | `XMPP_HOME_CHANNEL` | Default JID for cron / notifications |
+| `XMPP_ALLOWED_USERS` | Comma-separated JIDs allowed to message the bot (default: none, deny all) |
 | `XMPP_ALLOW_ALL_USERS` | Allow any user to message the bot (default: false) |
 
 ## Voice and Audio

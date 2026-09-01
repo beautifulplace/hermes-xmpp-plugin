@@ -112,3 +112,78 @@ stt:
     assert "stt:\n  provider: local\n  enabled: true" in result
     assert "voice:\n  auto_tts: false" in result
     assert result.count("provider:") == 2
+
+
+def test_normalize_allowed_users():
+    from install_xmpp_plugin import normalize_allowed_users
+
+    assert normalize_allowed_users("") == ""
+    assert normalize_allowed_users("   ") == ""
+    assert normalize_allowed_users("a@x.com") == "a@x.com"
+    assert normalize_allowed_users(" a@x.com , b@y.net ,,c@z.org ") == "a@x.com,b@y.net,c@z.org"
+
+
+def test_upsert_env_line_inserts_updates_dedupes():
+    from install_xmpp_plugin import _upsert_env_line
+
+    # Insert into empty file.
+    lines, changed = _upsert_env_line([], "A", "1")
+    assert lines == ['A="1"'] and changed
+
+    # Update existing in place.
+    lines, changed = _upsert_env_line(["X=1", 'A="old"', "Y=2"], "A", "new")
+    assert lines == ["X=1", 'A="new"', "Y=2"] and changed
+
+    # No-op when identical, including trailing whitespace.
+    lines, changed = _upsert_env_line(['A="same"'], "A", "same")
+    assert lines == ['A="same"'] and not changed
+    lines, changed = _upsert_env_line(['  A="same"  '], "A", "same")
+    assert lines == ['  A="same"  '] and not changed
+
+    # Drop duplicate key lines, keep the first position.
+    lines, changed = _upsert_env_line(['A="1"', 'B="2"', 'A="3"'], "A", "z")
+    assert lines == ['A="z"', 'B="2"'] and changed
+
+    # Spaced 'A = "v"' is canonicalized to KEY="value" form.
+    lines, changed = _upsert_env_line(['A = "v"'], "A", "v")
+    assert lines == ['A="v"'] and changed
+
+
+def test_append_env_credentials_writes_allowed_users(tmp_path):
+    """New install writes XMPP_ALLOWED_USERS alongside credentials."""
+    import install_xmpp_plugin as inst
+
+    env_path = tmp_path / ".env"
+    inst.append_env_credentials(
+        env_path, "bot@x.com", "pw", allowed_users="a@x.com,b@y.net"
+    )
+    text = env_path.read_text()
+    assert 'XMPP_USER_JID="bot@x.com"' in text
+    assert 'XMPP_PASSWORD="pw"' in text
+    assert 'XMPP_ALLOWED_USERS="a@x.com,b@y.net"' in text
+
+
+def test_append_env_credentials_updates_existing_allowed_users(tmp_path):
+    """Reinstall with a changed list upserts in place; unchanged list rewrites nothing."""
+    import install_xmpp_plugin as inst
+
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        'XMPP_USER_JID="bot@x.com"\n'
+        'XMPP_PASSWORD="pw"\n'
+        'XMPP_ALLOWED_USERS="old@x.com"\n'
+    )
+
+    inst.append_env_credentials(
+        env_path, "bot@x.com", "pw", allowed_users="new@x.com,other@y.net"
+    )
+    text = env_path.read_text()
+    assert 'XMPP_ALLOWED_USERS="new@x.com,other@y.net"' in text
+    assert "old@x.com" not in text
+    assert text.count("XMPP_ALLOWED_USERS") == 1
+
+    # Unchanged list: no rewrite at all.
+    inst.append_env_credentials(
+        env_path, "bot@x.com", "pw", allowed_users="new@x.com,other@y.net"
+    )
+    assert env_path.read_text() == text

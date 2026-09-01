@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.1.6] - 2026-08-31
+
+### Added
+- **Installer now asks for allowed users.** During interactive install, a new
+  prompt collects the comma-separated XMPP JIDs allowed to talk to the bot and
+  writes them to `XMPP_ALLOWED_USERS` in the profile `.env`. Without this
+  variable the gateway denies every sender ("No env user allowlists
+  configured" warning). A `--allowed-users` flag covers non-interactive
+  installs; an existing `XMPP_ALLOWED_USERS` is offered as the default and
+  upserted in place when changed. A warning is printed if the list stays
+  empty.
+
+### Fixed
+- Installer no longer duplicates the `plugins:` block when the profile config
+  uses a flow-style `enabled: []` list (as written by fresh profile creation).
+- Installer now flips a pre-existing `platforms.xmpp.enabled: false` to `true`
+  instead of leaving the freshly installed plugin disabled.
+
 ## [1.1.5] - 2026-08-29
 
 ### Fixed
