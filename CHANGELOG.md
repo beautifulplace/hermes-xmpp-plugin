@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.9] - 2026-09-01
+
+### Added
+- **Presence subscription automation so fresh installs show online (green).**
+  At startup the bot now sends a subscription request (`subscribe`) to every
+  JID on the allowlist, so the contact's client shows the standard
+  "wants to add you" prompt once; accepting yields a mutual ("both")
+  subscription. Inbound subscription requests are auto-approved (with a
+  reciprocal `subscribe`) when the sender is allowlisted or allow-all is
+  enabled; requests from non-allowlisted senders are silently ignored, the
+  same policy as denied messages. When no allowlist is configured there is
+  nothing to enumerate, so the proactive pass is a no-op and only the
+  auto-approve path applies.
+
 ## [1.1.8] - 2026-09-01
 
 ### Changed
