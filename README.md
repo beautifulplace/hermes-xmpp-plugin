@@ -34,7 +34,7 @@ Run the installer:
 python3 install_xmpp_plugin.py
 ```
 
-You will be prompted for your XMPP JID, password, and an optional avatar path. The installer writes these to your Hermes `.env` file so reinstalls do not require retyping.
+You will be prompted for your XMPP JID, password, an optional avatar path, and the comma-separated JIDs of users allowed to talk to the bot. The installer writes these to your Hermes `.env` file so reinstalls do not require retyping. The allowed-users list is stored as `XMPP_ALLOWED_USERS`; without it the gateway denies every sender.
 
 1. Copy the plugin to `~/.hermes/plugins/platforms/xmpp/`
 2. Enable it in `config.yaml`
@@ -72,7 +72,8 @@ For CI or headless setups, pass `--non-interactive` with `--jid` and `--password
 python3 install_xmpp_plugin.py \
   --non-interactive \
   --jid "hermes@example.com" \
-  --password "hermes-password"
+  --password "hermes-password" \
+  --allowed-users "you@example.com"
 ```
 
 ### Disable OMEMO encryption
@@ -106,6 +107,7 @@ All install-specific settings (credentials, home channel, and avatar path) are s
 # ~/.hermes/.env
 XMPP_USER_JID="hermes@example.com"
 XMPP_PASSWORD="hermes-password"
+XMPP_ALLOWED_USERS="you@example.com,friend@example.net"
 XMPP_HOME_CHANNEL="you@example.com"
 XMPP_AVATAR_PATH="/path/to/avatar.png"
 ```
@@ -121,8 +123,24 @@ Every `platforms.xmpp` option can also be set via an environment variable:
 | `XMPP_OMEMO_ENABLED` | Enable OMEMO (default: true) |
 | `XMPP_OMEMO_ALLOW_UNTRUSTED` | Auto-trust new OMEMO devices (default: true) |
 | `XMPP_AVATAR_PATH` | Path to an avatar image (optional) |
-| `XMPP_HOME_CHANNEL` | Default JID for cron / notifications |
+| `XMPP_HOME_CHANNEL` | Default JID for cron / notifications. **Seeded automatically at install** from the first entry of `XMPP_ALLOWED_USERS`; an existing value (or one set later via `/sethome`) always wins. |
+| `XMPP_ALLOWED_USERS` | Comma-separated JIDs allowed to message the bot (default: none, deny all) |
 | `XMPP_ALLOW_ALL_USERS` | Allow any user to message the bot (default: false) |
+
+> **Home channel note:** cron delivery and restart notifications need a home
+> target. The installer seeds `XMPP_HOME_CHANNEL` in `.env` from the first
+> allowlisted JID so no manual step is required. If the allowlist is empty,
+> nothing is seeded; use `/sethome` in a chat with the bot, or set the
+> variable in `.env` yourself. `/sethome` also records the home channel in
+> `config.yaml` (that is core Hermes behavior for every platform); the `.env`
+> value is what the installer and the legacy env fallback read.
+
+> **Security note:** if you do not set `XMPP_ALLOWED_USERS`, any user who can
+> reach your agent over XMPP will be able to talk to it. To restrict access,
+> set `XMPP_ALLOWED_USERS` to a comma-separated allowlist. To explicitly open
+> the bot to everyone, set `allow_all_users: true` in `config.yaml` (or
+> `XMPP_ALLOW_ALL_USERS=true` in `.env`). The installer prompts for this
+> explicitly rather than silently opening the agent to all users.
 
 ## Voice and Audio
 

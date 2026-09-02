@@ -408,6 +408,7 @@ class XMPPAdapter(BasePlatformAdapter):
 
             self.client.add_event_handler("session_start", self._session_start)
             self.client.add_event_handler("message", self._on_message)
+            self.client.add_event_handler("presence_subscribe", self._on_presence_subscribe)
             self.client.add_event_handler("exception", self._slixmpp_exception_handler)
             self.client.add_event_handler("disconnected", self._on_disconnected)
             self.client.add_event_handler("stream_negotiated", self._on_stream_negotiated)
@@ -1337,6 +1338,88 @@ class XMPPAdapter(BasePlatformAdapter):
         except Exception:
             pass
         self._session_started_event.set()
+        # Proactively request presence subscriptions from allowlisted users so
+        # fresh installs show online (green) in the contact's client without a
+        # manual re-add. No allowlist configured -> nothing to enumerate.
+        asyncio.create_task(self._send_subscription_requests())
+
+    def _allowed_users_set(self) -> set[str]:
+        """Bare-JID allowlist set from env/config (empty when none configured)."""
+        raw = os.getenv("XMPP_ALLOWED_USERS")
+        if not raw:
+            extra = getattr(getattr(self, "config", None), "extra", None) or {}
+            value = extra.get("allowed_users", "")
+            raw = value if isinstance(value, str) else ""
+        entries = raw.split(",") if isinstance(raw, str) else list(raw or [])
+        return {e.strip().lower() for e in entries if e and e.strip()}
+
+    def _allow_all_users(self) -> bool:
+        return os.getenv("XMPP_ALLOW_ALL_USERS", "").strip().lower() in {
+            "true", "1", "yes",
+        }
+
+    async def _send_subscription_requests(self) -> None:
+        """Option 2: proactively ask each allowlisted JID to add the bot.
+
+        Skipped entirely when no allowlist is configured (allow-all or deny-all):
+        there is no one to invite. Errors are logged, never fatal.
+        """
+        try:
+            allowed = self._allowed_users_set()
+            if not allowed:
+                return
+            client = self.client
+            if client is None:
+                return
+            await asyncio.wait_for(
+                self._session_started_event.wait(), timeout=5.0
+            )
+            for bare in sorted(allowed):
+                if bare == JID(self.user_jid).bare.lower():
+                    continue  # never subscribe to ourselves
+                try:
+                    client.send_presence(pto=bare, ptype="subscribe")
+                    logger.info(
+                        "XMPP: sent presence subscription request to %s", bare
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "XMPP: subscription request to %s failed: %s", bare, exc
+                    )
+        except Exception:
+            logger.exception("XMPP: subscription-request pass failed")
+
+    def _sender_authorized(self, bare_jid: str) -> bool:
+        """True when a bare JID may interact (allowlist or allow-all)."""
+        if self._allow_all_users():
+            return True
+        return bare_jid in self._allowed_users_set()
+
+    async def _on_presence_subscribe(self, presence):
+        """Option 1: auto-approve subscription requests from allowed senders.
+
+        Allowed senders get an immediate `subscribed` plus our own `subscribe`
+        so the roster ends up mutual ("both") and the bot shows green.
+        Requests from anyone else are silently ignored (same policy as denied
+        messages). Runs on the event loop; handler bodies must not block.
+        """
+        try:
+            from_jid = presence["from"]
+            bare = str(from_jid.bare).lower()
+            if not self._sender_authorized(bare):
+                logger.info(
+                    "XMPP: ignoring presence subscription request from non-allowlisted %s",
+                    bare,
+                )
+                return
+            client = self.client
+            if client is None:
+                return
+            client.send_presence(pto=str(from_jid.bare), ptype="subscribed")
+            client.send_presence(pto=str(from_jid.bare), ptype="subscribe")
+            logger.info("XMPP: approved presence subscription for %s", bare)
+        except Exception:
+            logger.exception("XMPP: presence_subscribe handling failed")
 
     async def _omemo_initialized(self, event=None):
         logger.info("XMPP: OMEMO initialized and device list published")
@@ -1727,6 +1810,14 @@ _XMPP_YAML_KEYS = (
 
 def _apply_yaml_config(yaml_cfg: dict, platform_cfg: dict) -> Optional[dict]:
     seeded = {k: platform_cfg[k] for k in _XMPP_YAML_KEYS if k in platform_cfg}
+    # Bridge the allowlist / allow-all config keys to the env vars the gateway
+    # authorization layer reads (XMPP_ALLOWED_USERS / XMPP_ALLOW_ALL_USERS), so
+    # config.yaml is the source of truth for access control. Env vars win when
+    # already set (env > YAML precedence).
+    if "allow_all_users" in platform_cfg and not os.getenv("XMPP_ALLOW_ALL_USERS"):
+        os.environ["XMPP_ALLOW_ALL_USERS"] = str(platform_cfg["allow_all_users"]).lower()
+    if "allowed_users" in platform_cfg and not os.getenv("XMPP_ALLOWED_USERS"):
+        os.environ["XMPP_ALLOWED_USERS"] = str(platform_cfg["allowed_users"])
     return seeded if seeded else None
 
 
