@@ -1,5 +1,80 @@
 # Changelog
 
+## [1.2.0] - 2026-09-01
+
+### Added
+- **The installer now seeds `XMPP_HOME_CHANNEL` in `.env` from the first
+  allowed user**, so cron delivery and restart notifications have a target
+  without running `/sethome`. An existing `XMPP_HOME_CHANNEL` (set by a
+  previous install or by `/sethome`) is never overwritten; an empty
+  allowlist seeds nothing. Documented in both READMEs.
+
+## [1.1.9] - 2026-09-01
+
+### Added
+- **Presence subscription automation so fresh installs show online (green).**
+  At startup the bot now sends a subscription request (`subscribe`) to every
+  JID on the allowlist, so the contact's client shows the standard
+  "wants to add you" prompt once; accepting yields a mutual ("both")
+  subscription. Inbound subscription requests are auto-approved (with a
+  reciprocal `subscribe`) when the sender is allowlisted or allow-all is
+  enabled; requests from non-allowlisted senders are silently ignored, the
+  same policy as denied messages. When no allowlist is configured there is
+  nothing to enumerate, so the proactive pass is a no-op and only the
+  auto-approve path applies.
+
+## [1.1.8] - 2026-09-01
+
+### Changed
+- **Installer now explains the allowlist security implication and requires an
+  explicit opt-in to allow all users.** The allowed-users prompt now states
+  that leaving the allowlist empty lets ANY user who can reach the agent over
+  XMPP talk to it. When no allowlist is entered, the installer asks a
+  yes/no "Allow ALL users to talk to this agent?" question; only an explicit
+  "yes" sets `allow_all_users: true` in `config.yaml` and
+  `XMPP_ALLOW_ALL_USERS=true` in `.env`. Answering "no" (or leaving it blank)
+  keeps the bot deny-all by default. A `--allow-all-users` flag covers
+  non-interactive installs.
+- **`allow_all_users` / `allowed_users` config keys are now bridged to the
+  gateway authorization env vars.** The adapter's `_apply_yaml_config` maps
+  `allow_all_users` → `XMPP_ALLOW_ALL_USERS` and `allowed_users` →
+  `XMPP_ALLOWED_USERS` (env wins when already set), so `config.yaml` is the
+  source of truth for access control.
+- **Reinstall clears a stale allow-all flag.** When the user now provides an
+  allowlist (or opts out of allow-all), a leftover `XMPP_ALLOW_ALL_USERS=true`
+  from a previous install is reset to `false` so the new choice takes effect.
+
+## [1.1.7] - 2026-08-31
+
+### Fixed
+- **Uninstaller failed to disable the plugin on configs with duplicate
+  `plugins:` blocks.** `disable_plugin()` only inspected the first
+  `plugins:` block, so a stale empty `enabled: []` block left by profile
+  creation shadowed the installer-written one: the enabled list kept
+  `platforms/xmpp` (piling up duplicates across reinstall cycles) even though
+  the config looked clean. `enable_plugin()`, `is_plugin_enabled()` and
+  `disable_plugin()` now iterate every `plugins:` block: the enabled item is
+  added to / removed from the block that actually wins (last-wins), stale
+  empty-list blocks are dropped, and uninstall leaves no empty duplicates.
+
+## [1.1.6] - 2026-08-31
+
+### Added
+- **Installer now asks for allowed users.** During interactive install, a new
+  prompt collects the comma-separated XMPP JIDs allowed to talk to the bot and
+  writes them to `XMPP_ALLOWED_USERS` in the profile `.env`. Without this
+  variable the gateway denies every sender ("No env user allowlists
+  configured" warning). A `--allowed-users` flag covers non-interactive
+  installs; an existing `XMPP_ALLOWED_USERS` is offered as the default and
+  upserted in place when changed. A warning is printed if the list stays
+  empty.
+
+### Fixed
+- Installer no longer duplicates the `plugins:` block when the profile config
+  uses a flow-style `enabled: []` list (as written by fresh profile creation).
+- Installer now flips a pre-existing `platforms.xmpp.enabled: false` to `true`
+  instead of leaving the freshly installed plugin disabled.
+
 ## [1.1.5] - 2026-08-29
 
 ### Fixed
