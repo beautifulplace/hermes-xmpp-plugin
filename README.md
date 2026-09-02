@@ -76,6 +76,36 @@ python3 install_xmpp_plugin.py \
   --allowed-users "you@example.com"
 ```
 
+### Advanced: installing with `hermes plugins install`
+
+Hermes core has a generic plugin installer:
+
+```bash
+hermes plugins install beautifulplace/hermes-xmpp-plugin/xmpp_plugin_source
+hermes plugins enable xmpp-platform
+```
+
+This copies the plugin files, runs the security scan, and prompts for
+`XMPP_USER_JID` / `XMPP_PASSWORD`. It intentionally does **not** install
+Python dependencies or write default config, so finish the setup with the
+post-install script shipped inside the plugin:
+
+```bash
+python3 ~/.hermes/plugins/xmpp-platform/post_install.py
+```
+
+That installs the plugin's Python dependencies into its own `deps/`
+directory (never touching externally-managed Pythons), adds the default
+`platforms.xmpp` block (OMEMO on) and voice/STT defaults to config.yaml,
+prompts for the allowed-users allowlist (deny-all by default; use
+`--allow-all-users` to open the bot, or `--allowed-users "jid1,jid2"` to
+skip prompts), and seeds the home channel from the first allowed user.
+It is safe to re-run. Then restart the gateway:
+
+```bash
+hermes gateway restart
+```
+
 ### Disable OMEMO encryption
 
 If you need to disable OMEMO after installation, edit `~/.hermes/config.yaml` and set:

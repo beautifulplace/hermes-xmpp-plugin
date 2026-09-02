@@ -17,13 +17,16 @@ from pathlib import Path
 from typing import NoReturn, Optional
 
 from hermes_xmpp_plugin_common import (
+    _load_env_credentials,
     add_default_xmpp_config,
     add_voice_and_stt_defaults,
+    append_env_credentials,
     backup_file,
     enable_plugin,
     get_hermes_home,
     get_hermes_python,
     get_profile_dir,
+    normalize_allowed_users,
 )
 
 REQUIRED_PLUGIN_FILES = {
@@ -43,11 +46,9 @@ DEPENDENCIES: list[tuple[str, str]] = [
     ("slixmpp-omemo", "slixmpp_omemo"),
 ]
 
-
 def fail(message: str) -> NoReturn:
     print(f"ERROR: {message}", file=sys.stderr)
     sys.exit(1)
-
 
 def copy_plugin(plugin_src: Path, plugin_dest: Path, force: bool) -> None:
     if not plugin_src.exists():
@@ -68,7 +69,6 @@ def copy_plugin(plugin_src: Path, plugin_dest: Path, force: bool) -> None:
 
     print(f"Installing plugin to {plugin_dest}")
     shutil.copytree(plugin_src, plugin_dest)
-
 
 def install_dependencies(
     python: Path,
@@ -114,7 +114,6 @@ def install_dependencies(
     else:
         print("All dependencies are satisfied.")
 
-
 def enable_plugin_in_config(
     config_path: Path,
     add_defaults: bool,
@@ -134,7 +133,6 @@ def enable_plugin_in_config(
 
     config_path.write_text(config_text)
 
-
 def validate_avatar_path(path: str) -> tuple[bool, str]:
     """Return (ok, message) for a proposed avatar path."""
     if not path:
@@ -145,40 +143,6 @@ def validate_avatar_path(path: str) -> tuple[bool, str]:
     if not p.is_file():
         return False, f"Avatar path is not a file: {p}"
     return True, ""
-
-
-def _upsert_env_line(lines: list[str], key: str, value: str) -> tuple[list[str], bool]:
-    """Insert or update KEY="value" among .env lines. Returns (new_lines, changed).
-
-    Updates an existing line in place (dropping duplicate key lines) instead of
-    appending a second entry for the same key.
-    """
-    rendered = f'{key}="{value}"'
-    out: list[str] = []
-    replaced = False
-    changed = False
-    for line in lines:
-        if "=" in line and line.split("=", 1)[0].strip() == key:
-            if replaced:
-                continue  # drop duplicate key lines
-            if line.strip() != rendered:
-                out.append(rendered)
-                changed = True
-            else:
-                out.append(line)
-            replaced = True
-        else:
-            out.append(line)
-    if not replaced:
-        out.append(rendered)
-        changed = True
-    return out, changed
-
-
-def normalize_allowed_users(raw: str) -> str:
-    """Normalize a comma-separated XMPP allowlist string ('' when empty)."""
-    return ",".join(part.strip() for part in raw.split(",") if part.strip())
-
 
 def prompt_for_avatar(avatar_path: str) -> str:
     """Validate and optionally re-prompt for an avatar path."""
@@ -195,7 +159,6 @@ def prompt_for_avatar(avatar_path: str) -> str:
         if ok:
             return new_path
         print(f"WARNING: {msg}")
-
 
 def prompt_xmpp_credentials(
     args: argparse.Namespace,
@@ -296,108 +259,6 @@ def prompt_xmpp_credentials(
 
     return jid, password, avatar_path, allowed_users, allow_all_users
 
-
-def append_env_credentials(
-    env_path: Path,
-    jid: str,
-    password: str,
-    avatar_path: str = "",
-    allowed_users: str = "",
-    allow_all_users: bool = False,
-    home_channel: str = "",
-) -> None:
-    """Append credentials and avatar path to the Hermes .env file if not already present.
-
-    Stores XMPP_USER_JID, XMPP_PASSWORD, and XMPP_AVATAR_PATH. Never writes secrets to config.yaml.
-    XMPP_ALLOWED_USERS is upserted (existing value updated in place) so reinstalling
-    with a new allowlist takes effect without manual .env editing.
-    XMPP_ALLOW_ALL_USERS is written only when the user explicitly opted to allow
-    every sender (no allowlist).
-    XMPP_HOME_CHANNEL is seeded from the first allowed user (cron/restart
-    notification target) unless it is already set in .env — an existing value
-    (or one set later via /sethome) always wins.
-    """
-    lines: list[str] = []
-    if env_path.exists():
-        text = env_path.read_text()
-        lines = text.splitlines()
-        if not text.endswith("\n"):
-            lines.append("")
-
-    existing_keys = {line.split("=", 1)[0].strip() for line in lines if "=" in line}
-    additions: list[str] = []
-    if "XMPP_USER_JID" not in existing_keys:
-        additions.append(f'XMPP_USER_JID="{jid}"')
-    if "XMPP_PASSWORD" not in existing_keys:
-        additions.append(f'XMPP_PASSWORD="{password}"')
-    if avatar_path and "XMPP_AVATAR_PATH" not in existing_keys:
-        additions.append(f'XMPP_AVATAR_PATH="{avatar_path}"')
-
-    if allowed_users:
-        lines, upserted = _upsert_env_line(lines, "XMPP_ALLOWED_USERS", allowed_users)
-        # An explicit allowlist must not be silently defeated by a stale
-        # allow-all flag from a previous install. Clear it so the allowlist
-        # actually takes effect.
-        lines, cleared = _upsert_env_line(lines, "XMPP_ALLOW_ALL_USERS", "false")
-        upserted = upserted or cleared
-    else:
-        upserted = False
-
-    if allow_all_users:
-        lines, allow_all_upserted = _upsert_env_line(
-            lines, "XMPP_ALLOW_ALL_USERS", "true"
-        )
-        upserted = upserted or allow_all_upserted
-    elif not allowed_users:
-        # No allowlist and not allow-all: clear any stale allow-all flag from a
-        # previous install so the bot defaults to deny-all rather than silently
-        # staying open to every sender.
-        lines, cleared = _upsert_env_line(lines, "XMPP_ALLOW_ALL_USERS", "false")
-        upserted = upserted or cleared
-
-    # Seed the cron/restart-notification home target from the first allowed
-    # user so the bot has a delivery target without /sethome. Never overwrite
-    # an existing XMPP_HOME_CHANNEL (install-time choice or /sethome result).
-    if home_channel and "XMPP_HOME_CHANNEL" not in existing_keys:
-        lines, seeded = _upsert_env_line(lines, "XMPP_HOME_CHANNEL", home_channel)
-        upserted = upserted or seeded
-
-    if additions:
-        body = (lines + additions) if (env_path.exists() or lines) else additions
-        env_path.write_text("\n".join(body) + "\n")
-    elif upserted or (lines and _env_text_changed(env_path, lines)):
-        env_path.write_text("\n".join(lines) + "\n")
-
-    if additions:
-        print(f"Appended credentials to {env_path}")
-    if allowed_users:
-        print(f"Allowed users written to {env_path}: XMPP_ALLOWED_USERS={allowed_users}")
-    if allow_all_users:
-        print(f"Allow-all-users written to {env_path}: XMPP_ALLOW_ALL_USERS=true")
-
-
-def _env_text_changed(env_path: Path, lines: list[str]) -> bool:
-    if not env_path.exists():
-        return bool(lines)
-    return env_path.read_text() != "\n".join(lines) + "\n"
-
-
-def _load_env_credentials(env_path: Path) -> dict[str, str]:
-    """Load existing credentials from the Hermes .env file."""
-    if not env_path.exists():
-        return {}
-    result: dict[str, str] = {}
-    for line in env_path.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        if key in ("XMPP_USER_JID", "XMPP_PASSWORD", "XMPP_ALLOWED_USERS"):
-            result[key] = value.strip().strip('"\'')
-    return result
-
-
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Install the Hermes XMPP platform plugin."
@@ -472,7 +333,6 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Skip interactive prompts; requires --jid and --password if not using --no-defaults",
     )
     return parser.parse_args(argv)
-
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)

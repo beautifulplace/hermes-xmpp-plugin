@@ -1,7 +1,7 @@
 name: xmpp-platform
 label: XMPP
 kind: platform
-version: 1.2.0
+version: 1.2.1
 description: >
   XMPP gateway adapter for Hermes Agent.
   Connects to an XMPP server and relays messages between XMPP users
