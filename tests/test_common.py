@@ -1,3 +1,4 @@
+import pathlib
 import sys
 import tempfile
 from pathlib import Path
@@ -124,7 +125,7 @@ def test_normalize_allowed_users():
 
 
 def test_upsert_env_line_inserts_updates_dedupes():
-    from install_xmpp_plugin import _upsert_env_line
+    from hermes_xmpp_plugin_common import _upsert_env_line
 
     # Insert into empty file.
     lines, changed = _upsert_env_line([], "A", "1")
@@ -403,3 +404,48 @@ def test_enable_disable_roundtrip_luna_shape():
     assert not is_plugin_enabled(disabled)
     assert disabled.count("plugins:") == 0
     assert "xmpp" not in disabled
+
+
+def test_root_common_shim_reexports_vendored_module():
+    """Repo-root hermes_xmpp_plugin_common re-exports the vendored copy."""
+    import hermes_xmpp_plugin_common as root
+    from xmpp_plugin_source import hermes_xmpp_plugin_common as vendored
+
+    for name in ("add_default_xmpp_config", "append_env_credentials",
+                 "enable_plugin", "disable_plugin", "normalize_allowed_users",
+                 "add_voice_and_stt_defaults"):
+        assert getattr(root, name) is getattr(vendored, name), name
+
+
+def test_post_install_enable_plugin_in_config(tmp_path):
+    """post_install.enable_plugin_in_config enables + adds defaults idempotently."""
+    import sys
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "xmpp_plugin_source"))
+    import post_install
+
+    config = tmp_path / "config.yaml"
+    config.write_text("plugins:\n  enabled: []\n")
+    post_install.enable_plugin_in_config(config, add_defaults=True)
+    text = config.read_text()
+    assert "platforms/xmpp" in text
+    assert "omemo_enabled: true" in text
+
+    # Re-run: idempotent, no duplicate enable
+    post_install.enable_plugin_in_config(config, add_defaults=True)
+    text2 = config.read_text()
+    assert text2.count("platforms/xmpp") == text.count("platforms/xmpp")
+
+
+def test_post_install_seeds_home_and_allowlist(tmp_path):
+    """post_install writes allowlist + home seed via the shared helper."""
+    import sys
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "xmpp_plugin_source"))
+    from xmpp_plugin_source.hermes_xmpp_plugin_common import append_env_credentials
+
+    env = tmp_path / ".env"
+    append_env_credentials(env, "bot@x.com", "pw",
+                           allowed_users="a@x.com,b@y.net", home_channel="a@x.com")
+    text = env.read_text()
+    assert 'XMPP_ALLOWED_USERS="a@x.com,b@y.net"' in text
+    assert 'XMPP_HOME_CHANNEL="a@x.com"' in text
+    assert 'XMPP_USER_JID="bot@x.com"' in text

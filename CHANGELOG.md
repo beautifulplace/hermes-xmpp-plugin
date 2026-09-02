@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.2.1] - 2026-09-02
+
+### Added
+- **`post_install.py` ships inside the plugin** for users who install via
+  `hermes plugins install beautifulplace/hermes-xmpp-plugin/xmpp_plugin_source`.
+  That core command copies files, scans, and prompts for JID/password but
+  intentionally skips dependencies and defaults; the post-install script
+  completes the setup: deps into the plugin's own `deps/` dir, default
+  `platforms.xmpp` block (OMEMO on) + voice/STT defaults, allowlist prompt
+  (deny-all by default, `--allow-all-users`/`--allowed-users` flags), home
+  channel seeding. Idempotent, safe to re-run. Documented in a new README
+  "Advanced" section.
+- `hermes_xmpp_plugin_common` now ships inside `xmpp_plugin_source/` so the
+  post-install script shares the exact tested config/env mutation code with
+  the root installer (single implementation; the repo-root module is now a
+  re-export shim).
+
+### Changed
+- Env-credential helpers (`append_env_credentials`, allowlist normalization,
+  env upsert) moved from `install_xmpp_plugin.py` into the shared common
+  module. No behavior change for the canonical installer.
+
 ## [1.2.0] - 2026-09-01
 
 ### Added
