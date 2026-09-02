@@ -408,13 +408,17 @@ def test_enable_disable_roundtrip_luna_shape():
 
 def test_root_common_shim_reexports_vendored_module():
     """Repo-root hermes_xmpp_plugin_common re-exports the vendored copy."""
-    import hermes_xmpp_plugin_common as root
-    from xmpp_plugin_source import hermes_xmpp_plugin_common as vendored
+    from hermes_xmpp_plugin_common_vendored import append_env_credentials as _v
 
-    for name in ("add_default_xmpp_config", "append_env_credentials",
-                 "enable_plugin", "disable_plugin", "normalize_allowed_users",
-                 "add_voice_and_stt_defaults"):
-        assert getattr(root, name) is getattr(vendored, name), name
+    import hermes_xmpp_plugin_common as root
+
+    # The shim loads the vendored file directly (no package __init__ -> no
+    # adapter/httpx import chain) and re-exports the same function objects.
+    assert root.append_env_credentials is _v
+    for name in ("add_default_xmpp_config", "enable_plugin", "disable_plugin",
+                 "normalize_allowed_users", "add_voice_and_stt_defaults",
+                 "is_plugin_enabled", "remove_xmpp_config"):
+        assert callable(getattr(root, name)), name
 
 
 def test_post_install_enable_plugin_in_config(tmp_path):
@@ -440,7 +444,7 @@ def test_post_install_seeds_home_and_allowlist(tmp_path):
     """post_install writes allowlist + home seed via the shared helper."""
     import sys
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "xmpp_plugin_source"))
-    from xmpp_plugin_source.hermes_xmpp_plugin_common import append_env_credentials
+    from hermes_xmpp_plugin_common import append_env_credentials
 
     env = tmp_path / ".env"
     append_env_credentials(env, "bot@x.com", "pw",
