@@ -2,6 +2,19 @@
 
 XMPP gateway adapter for [Hermes Agent](https://github.com/NousResearch/hermes-agent). Connects the agent to an XMPP server, routes messages, supports inbound/outbound media, OMEMO end-to-end encryption by default, and voice/audio messages via the Hermes core TTS/STT configuration.
 
+[![version](https://img.shields.io/badge/version-1.2.1-blue)](CHANGELOG.md) [![python](https://img.shields.io/badge/language-python-blue)] [![license](https://img.shields.io/badge/license-MIT-blue)]
+
+## Contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Voice and Audio](#voice-and-audio)
+- [Uninstallation](#uninstallation)
+- [Development](#development)
+- [License](#license)
+
 ## Features
 
 - OMEMO-encrypted messaging (default; plain-text fallback)
