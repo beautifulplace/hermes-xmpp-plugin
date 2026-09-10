@@ -390,28 +390,45 @@ def add_default_xmpp_config(config_text: str, allow_all_users: bool = False) -> 
 
 
 def _upsert_xmpp_allow_all_users(config_text: str, allow_all: str) -> str:
-    """Set allow_all_users within an existing platforms.xmpp block.
+    """Set allow_all_users within the platforms.xmpp block.
 
     Replaces the value in place when the key is present, otherwise appends it
     after the last key in the xmpp block. Returns config_text unchanged when
-    no xmpp block is found.
+    no platforms.xmpp block is found.
+
+    The search is scoped to the ``platforms:`` block ONLY. A naive search for
+    the first ``xmpp:`` line anywhere in the file can match the ``xmpp:`` key
+    inside ``platform_toolsets:`` (a list of tool names), injecting
+    ``allow_all_users`` into the middle of that list and corrupting the YAML
+    (``while parsing a block collection``). The installer only ever creates
+    the ``platforms.xmpp`` block, so that is the only one it may touch.
     """
-    match = re.search(r"^(\s*)xmpp:\s*$", config_text, re.MULTILINE)
-    if not match:
+    # Locate the top-level platforms: block.
+    pstart, pend = _find_block_bounds(config_text, "platforms")
+    if pstart < 0:
         return config_text
-    indent = match.group(1)
     lines = config_text.splitlines()
-    start = config_text[: match.start()].count("\n")
+    platforms_lines = lines[pstart:pend]
+
+    # Within the platforms block, find the xmpp: sub-block (indented).
+    joined = "\n".join(platforms_lines)
+    xmpp_match = re.search(r"^(\s+)xmpp:\s*$", joined, re.MULTILINE)
+    if not xmpp_match:
+        return config_text
+    indent = xmpp_match.group(1)
     xmpp_indent = len(indent)
-    end = len(lines)
-    for i in range(start + 1, len(lines)):
+    # xmpp_match is relative to the joined platforms block; map back to an
+    # absolute line index by counting newlines before the match.
+    xstart = pstart + joined[: xmpp_match.start()].count("\n")
+    xend = pend
+    for i in range(xstart + 1, pend):
         line = lines[i]
         if line.strip() == "":
             continue
         if len(line) - len(line.lstrip()) <= xmpp_indent:
-            end = i
+            xend = i
             break
-    block = "\n".join(lines[start:end])
+    block = "\n".join(lines[xstart:xend])
     if re.search(rf"^{indent}\s+allow_all_users:", block, re.MULTILINE):
         block = re.sub(
             rf"^({indent}\s+allow_all_users:\s*).*$",
@@ -422,7 +439,7 @@ def _upsert_xmpp_allow_all_users(config_text: str, allow_all: str) -> str:
         )
     else:
         block = block.rstrip() + f"\n{indent}  allow_all_users: {allow_all}"
-    lines[start:end] = block.splitlines()
+    lines[xstart:xend] = block.splitlines()
     return "\n".join(lines)
 
 

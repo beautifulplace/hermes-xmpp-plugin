@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.2.3] - 2026-09-09
+
+### Fixed
+- **Installer no longer corrupts config.yaml when `platform_toolsets.xmpp`
+  precedes `platforms.xmpp`.** `_upsert_xmpp_allow_all_users` searched for the
+  first `xmpp:` line anywhere in the file, so it could match the `xmpp:` key
+  inside `platform_toolsets:` (a list of tool names) and inject
+  `allow_all_users` into the middle of that list. That produced invalid YAML
+  (`while parsing a block collection`) and forced Hermes to fall back to
+  default config, ignoring every user override. The upsert is now scoped to the
+  `platforms:` block only, which is the only block the installer creates.
+
+## [1.2.2] - 2026-09-09
+
+### Fixed
+- **OMEMO decrypt failures now self-heal instead of silently falling back to
+  plaintext.** When a message fails to decrypt (`NoSession` or
+  `DecryptionFailed` — a desynced double-ratchet), the plugin now drops the
+  sending device's stale session keys so the next outbound message re-establishes
+  the ratchet via a fresh key exchange. Previously every subsequent message from
+  that device kept failing and the plugin silently fell back to plaintext, which
+  is why messages kept arriving unencrypted. This is the durable fix for the
+  recurring session desyncs (no surgical resets).
+
 ## [1.2.1] - 2026-09-02
 
 ### Added

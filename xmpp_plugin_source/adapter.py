@@ -1466,6 +1466,27 @@ class XMPPAdapter(BasePlatformAdapter):
                         logger.debug("XMPP: OMEMO decrypted message from %s: %s chars", sender_bare, len(body))
                 except Exception as exc:
                     logger.warning("XMPP: OMEMO decrypt attempt failed: %s", exc, exc_info=True)
+                    # Self-heal a desynced/stale session: drop the sending
+                    # device's session keys so the next outbound message
+                    # re-establishes the ratchet via a fresh key exchange.
+                    # Without this, every subsequent message from that device
+                    # keeps failing and we silently fall back to plaintext.
+                    try:
+                        sid_el = msg.xml.find(
+                            ".//{eu.siacs.conversations.axolotl}header"
+                        )
+                        if sid_el is None:
+                            sid_el = msg.xml.find(".//{urn:xmpp:omemo:2}header")
+                        if sid_el is not None and sid_el.get("sid"):
+                            sender_device_id = int(sid_el.get("sid"))
+                            if hasattr(omemo, "recover_stale_session"):
+                                await omemo.recover_stale_session(
+                                    sender_bare, sender_device_id
+                                )
+                    except Exception as recover_exc:
+                        logger.warning(
+                            "XMPP: OMEMO session recovery failed: %s", recover_exc
+                        )
                     # Fall back to plaintext body if decryption fails.
 
             # Remember that this chat is OMEMO-active so all replies are encrypted.

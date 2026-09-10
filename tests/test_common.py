@@ -217,6 +217,38 @@ def test_add_default_xmpp_config_upserts_existing_block():
     assert "omemo_enabled: true" in result
 
 
+def test_add_default_xmpp_config_ignores_platform_toolsets_xmpp():
+    """allow_all_users must target platforms.xmpp, never platform_toolsets.xmpp.
+
+    Regression: the old _upsert_xmpp_allow_all_users searched for the first
+    ``xmpp:`` line anywhere in the file. When platform_toolsets.xmpp (a list of
+    tool names) appeared before platforms.xmpp, it injected ``allow_all_users``
+    into the middle of that list, corrupting the YAML with
+    ``while parsing a block collection`` and forcing Hermes to fall back to
+    default config.
+    """
+    config = (
+        "platform_toolsets:\n"
+        "  xmpp:\n"
+        "    - browser\n"
+        "    - terminal\n"
+        "platforms:\n"
+        "  xmpp:\n"
+        "    enabled: true\n"
+        "    omemo_enabled: true\n"
+    )
+    result = add_default_xmpp_config(config, allow_all_users=False)
+    # The toolset list must be untouched (no allow_all_users injected into it).
+    assert "    - browser\n    - terminal\n" in result
+    # allow_all_users lands in the platforms.xmpp block, not the toolset list.
+    assert "    allow_all_users: false" in result
+    # The result must still parse as valid YAML.
+    import yaml
+    parsed = yaml.safe_load(result)
+    assert parsed["platform_toolsets"]["xmpp"] == ["browser", "terminal"]
+    assert parsed["platforms"]["xmpp"]["allow_all_users"] is False
+
+
 def test_append_env_credentials_writes_allow_all(tmp_path):
     """allow_all_users=True writes XMPP_ALLOW_ALL_USERS=true."""
     import install_xmpp_plugin as inst
