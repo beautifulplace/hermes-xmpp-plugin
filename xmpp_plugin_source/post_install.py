@@ -5,7 +5,7 @@ Run this AFTER ``hermes plugins install`` (the core installer) to complete
 what that command intentionally does not do:
 
   * install plugin Python dependencies (into the plugin's own ``deps/``
-    directory — never touches externally-managed Pythons, PEP 668, uv, etc.)
+    directory, never touches externally-managed Pythons, PEP 668, uv, etc.)
   * add the default ``platforms.xmpp`` block (OMEMO on by default) and the
     voice/STT defaults to config.yaml
   * prompt for the allowed-users allowlist (deny-all by default) and the

@@ -595,7 +595,7 @@ def append_env_credentials(
     XMPP_ALLOW_ALL_USERS is written only when the user explicitly opted to allow
     every sender (no allowlist).
     XMPP_HOME_CHANNEL is seeded from the first allowed user (cron/restart
-    notification target) unless it is already set in .env — an existing value
+    notification target) unless it is already set in .env. An existing value
     (or one set later via /sethome) always wins.
     """
     lines: list[str] = []

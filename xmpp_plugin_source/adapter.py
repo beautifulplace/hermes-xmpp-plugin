@@ -1497,7 +1497,7 @@ class XMPPAdapter(BasePlatformAdapter):
                     notice = (
                         "[Hermes] Your last message used an outdated encryption "
                         "session, so it could not be decrypted. The session has "
-                        "been re-established — please resend that message."
+                        "been re-established, please resend that message."
                     )
                     notice_msg = self.client.make_message(
                         mto=JID(sender_bare), mtype="chat"

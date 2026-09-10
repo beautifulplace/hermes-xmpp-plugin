@@ -119,7 +119,7 @@ class JSONFileStorage(Storage):
             if not key.startswith("/devices/"):
                 continue
             parts = key.split("/")
-            # /devices/<jid>/<device_id>/<attr> — the JID itself contains
+            # /devices/<jid>/<device_id>/<attr> - the JID itself contains
             # slashes only as a domain separator, so parts[2] is always the
             # full bare JID and parts[3] the device id.
             if len(parts) < 5:
