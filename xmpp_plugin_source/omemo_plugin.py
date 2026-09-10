@@ -275,6 +275,43 @@ class HermesOMEMO(XEP_0384):
             logger.info("OMEMO: pruned %d stale session/device keys", removed)
         return removed
 
+    async def recover_stale_session(
+        self,
+        sender_bare_jid: str,
+        sender_device_id: int,
+    ) -> bool:
+        """Drop a desynced/stale session and re-establish it via a fresh key exchange.
+
+        When a message fails to decrypt (NoSession or DecryptionFailed), the
+        double-ratchet session with the sending device is broken. Real OMEMO
+        clients recover by deleting the stale session and sending a fresh key
+        exchange, so the next outbound message builds a new session actively
+        (sends a prekey) and the peer's reply carries its own key exchange,
+        putting both sides back in sync. Without this, every subsequent message
+        from that device keeps failing and the plugin silently falls back to
+        plaintext.
+
+        This deletes the stored session keys for the device (both the oldmemo
+        and newmemo namespaces) so the next encrypt() call for that device
+        builds a fresh session. Returns True if any session keys were removed.
+        """
+        storage = self._storage
+        removed = 0
+        for namespace in ("eu.siacs.conversations.axolotl", "urn:xmpp:omemo:2"):
+            prefix = f"/{namespace}/{sender_bare_jid}/{sender_device_id}/"
+            for key in list(storage._data.keys()):
+                if key.startswith(prefix):
+                    del storage._data[key]
+                    removed += 1
+        if removed:
+            await storage._save()
+            logger.info(
+                "OMEMO: dropped stale session for %s/%s (%d keys); "
+                "next message will re-establish it",
+                sender_bare_jid, sender_device_id, removed,
+            )
+        return removed > 0
+
     async def _devices_blindly_trusted(
         self,
         blindly_trusted: FrozenSet,

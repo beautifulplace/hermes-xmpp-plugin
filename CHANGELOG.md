@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.2] - 2026-09-09
+
+### Fixed
+- **OMEMO decrypt failures now self-heal instead of silently falling back to
+  plaintext.** When a message fails to decrypt (`NoSession` or
+  `DecryptionFailed` — a desynced double-ratchet), the plugin now drops the
+  sending device's stale session keys so the next outbound message re-establishes
+  the ratchet via a fresh key exchange. Previously every subsequent message from
+  that device kept failing and the plugin silently fell back to plaintext, which
+  is why messages kept arriving unencrypted. This is the durable fix for the
+  recurring session desyncs (no surgical resets).
+
 ## [1.2.1] - 2026-09-02
 
 ### Added
