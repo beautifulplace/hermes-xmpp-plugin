@@ -1471,6 +1471,7 @@ class XMPPAdapter(BasePlatformAdapter):
                     # re-establishes the ratchet via a fresh key exchange.
                     # Without this, every subsequent message from that device
                     # keeps failing and we silently fall back to plaintext.
+                    sender_device_id: Optional[int] = None
                     try:
                         sid_el = msg.xml.find(
                             ".//{eu.siacs.conversations.axolotl}header"
@@ -1487,7 +1488,52 @@ class XMPPAdapter(BasePlatformAdapter):
                         logger.warning(
                             "XMPP: OMEMO session recovery failed: %s", recover_exc
                         )
-                    # Fall back to plaintext body if decryption fails.
+                    # The undecryptable body is ciphertext, not text; it must
+                    # never reach the agent (it once produced a confabulated
+                    # "my client has no OMEMO support" reply). Suppress the
+                    # stanza entirely, re-establish the session with a silent
+                    # key exchange, and ask the sender to resend.
+                    await omemo.build_recovery_message(sender_bare, "")
+                    notice = (
+                        "[Hermes] Your last message used an outdated encryption "
+                        "session, so it could not be decrypted. The session has "
+                        "been re-established — please resend that message."
+                    )
+                    notice_msg = self.client.make_message(
+                        mto=JID(sender_bare), mtype="chat"
+                    )
+                    notice_msg["body"] = notice
+                    notice_msg["id"] = self.client.new_id()
+                    notice_msg.set_to(JID(sender_bare))
+                    notice_msg.set_from(self.client.boundjid)
+                    try:
+                        encrypted_notice, _errs = await omemo.encrypt_message(
+                            notice_msg,
+                            recipient_jids={JID(sender_bare)},
+                            identifier=sender_bare,
+                        )
+                        if encrypted_notice is not None:
+                            encrypted_notice.send()
+                            logger.warning(
+                                "XMPP: sent OMEMO recovery notice to %s", sender_bare
+                            )
+                        else:
+                            notice_msg.send()
+                            logger.warning(
+                                "XMPP: sent plaintext OMEMO recovery notice to %s",
+                                sender_bare,
+                            )
+                    except Exception as notice_exc:
+                        logger.warning(
+                            "XMPP: failed to send OMEMO recovery notice: %s",
+                            notice_exc,
+                        )
+                        try:
+                            notice_msg.send()
+                        except Exception:
+                            pass
+                    # Do not process the undecryptable stanza further.
+                    return
 
             # Remember that this chat is OMEMO-active so all replies are encrypted.
             if encrypted and sender_bare not in self._omemo_chats:

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import FrozenSet, Optional
 
 from omemo.storage import JSONType, Just, Maybe, Nothing, Storage
+from slixmpp import JID, Message
 from slixmpp_omemo import XEP_0384, TrustLevel
 
 logger = logging.getLogger(__name__)
@@ -311,6 +312,54 @@ class HermesOMEMO(XEP_0384):
                 sender_bare_jid, sender_device_id, removed,
             )
         return removed > 0
+
+    async def build_recovery_message(
+        self,
+        recipient_bare_jid: str,
+        notice_text: str,
+    ) -> Optional[Message]:
+        """Send a fresh key exchange to a peer whose session was just dropped.
+
+        Real OMEMO clients recover a desynced session by sending a new key
+        exchange immediately, instead of waiting for the peer's next message.
+        An OMEMO-encrypted message with an empty ``<body>`` makes
+        slixmpp-omemo build and send key material for every published device
+        of the recipient, which re-establishes the ratchet. The recipient
+        client auto-processes it silently and shows no chat entry.
+
+        Returns the sent Message (for the caller to send a follow-up notice
+        as a separate stanza), or None when encryption is unavailable.
+        """
+        client = self.xmpp
+        if client is None or not client.is_connected():
+            return None
+        try:
+            msg = client.make_message(mto=JID(recipient_bare_jid), mtype="chat")
+            msg["body"] = ""
+            msg["id"] = client.new_id()
+            msg.set_to(JID(recipient_bare_jid))
+            msg.set_from(client.boundjid)
+            encrypted, _errors = await self.encrypt_message(
+                msg,
+                recipient_jids={JID(recipient_bare_jid)},
+                identifier=recipient_bare_jid,
+            )
+            if encrypted is None:
+                logger.warning(
+                    "OMEMO: recovery key exchange for %s produced no encrypted stanza",
+                    recipient_bare_jid,
+                )
+                return None
+            encrypted.send()
+            logger.info(
+                "OMEMO: sent recovery key exchange to %s", recipient_bare_jid
+            )
+            return encrypted
+        except Exception:
+            logger.exception(
+                "OMEMO: recovery key exchange to %s failed", recipient_bare_jid
+            )
+            return None
 
     async def _devices_blindly_trusted(
         self,
