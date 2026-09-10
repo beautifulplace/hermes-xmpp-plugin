@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.2.4] - 2026-09-10
+
+### Fixed
+- **First message after a restart/upgrade now triggers transparent OMEMO
+  recovery instead of reaching the model as garbage.** When an inbound OMEMO
+  message fails to decrypt (desynced double-ratchet after the peer or the bot
+  restarted/reinstalled), `_on_message` now:
+  1. drops the stale session keys (v1.2.2 self-heal),
+  2. immediately sends a fresh key exchange the way real OMEMO clients do
+     (`HermesOMEMO.build_recovery_message`), so the peer's next message
+     decrypts,
+  3. sends an encrypted "please resend" notice instead of letting the
+     undecryptable ciphertext body reach the agent — the ciphertext body once
+     made the model reply "my client has no OMEMO support", which is never a
+     truthful explanation,
+  4. suppresses the stanza entirely (no agent event, no reply built from it).
+  The v1.2.2 behavior (self-heal by the next message) is preserved; this
+  closes the gap where the triggering message itself was always lost.
+
 ## [1.2.3] - 2026-09-09
 
 ### Fixed
