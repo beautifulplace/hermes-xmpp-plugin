@@ -12,9 +12,9 @@
      (`HermesOMEMO.build_recovery_message`), so the peer's next message
      decrypts,
   3. sends an encrypted "please resend" notice instead of letting the
-     undecryptable ciphertext body reach the agent — the ciphertext body once
+     undecryptable ciphertext body reach the agent (the ciphertext body once
      made the model reply "my client has no OMEMO support", which is never a
-     truthful explanation,
+     truthful explanation),
   4. suppresses the stanza entirely (no agent event, no reply built from it).
   The v1.2.2 behavior (self-heal by the next message) is preserved; this
   closes the gap where the triggering message itself was always lost.
@@ -36,7 +36,7 @@
 ### Fixed
 - **OMEMO decrypt failures now self-heal instead of silently falling back to
   plaintext.** When a message fails to decrypt (`NoSession` or
-  `DecryptionFailed` — a desynced double-ratchet), the plugin now drops the
+  `DecryptionFailed`, a desynced double-ratchet), the plugin now drops the
   sending device's stale session keys so the next outbound message re-establishes
   the ratchet via a fresh key exchange. Previously every subsequent message from
   that device kept failing and the plugin silently fell back to plaintext, which
@@ -147,8 +147,8 @@
   in 1.1.2 removed the bot's stale own-device *keys* but left their IDs in the
   device list. The OMEMO library's `SessionManager.create` iterates every
   listed device and requires its `/namespaces` key, so any listed-but-keyless
-  device crashed OMEMO startup with `NothingException: Maybe.fromJust: Nothing`
-  — after which every encrypt/decrypt in that gateway process re-raised the
+  device crashed OMEMO startup with `NothingException: Maybe.fromJust: Nothing`,
+  after which every encrypt/decrypt in that gateway process re-raised the
   same cached failure and replies silently fell back to plaintext.
   - `prune_stale_sessions()` now also removes stale IDs from the device list,
     keeping the list and per-device keys consistent.
@@ -206,8 +206,8 @@
 ## [1.1.1] - 2026-08-27
 
 ### Changed
-- **Dashboard card text.** The plugin `install_hint` — shown as the channel description on
-  the Hermes dashboard Channels page — is now the user-facing sentence "Talk to Hermes
+- **Dashboard card text.** The plugin `install_hint` (shown as the channel description on
+  the Hermes dashboard Channels page) is now the user-facing sentence "Talk to Hermes
   over XMPP" instead of the pip dependency command (changed in `plugin.yaml` and the
   `PlatformEntry` registration in `adapter.py`).
 - **Logging cleanup.** Reduced verbosity of routine XMPP connection, send, and chat-state
