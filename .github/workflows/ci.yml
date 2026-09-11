@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install test dependencies
+        run: |
+          python3 -m venv .venv-ci
+          .venv-ci/bin/pip install --quiet pytest ruff pyyaml
+
+      - name: Lint with ruff
+        run: .venv-ci/bin/ruff check .
+
+      - name: Run tests
+        run: .venv-ci/bin/pytest tests/
+
+  validate-installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate install/uninstall scripts parse
+        run: |
+          python3 -m py_compile install_xmpp_plugin.py
+          python3 -m py_compile uninstall_xmpp_plugin.py
+          python3 -m py_compile hermes_xmpp_plugin_common.py
+
+      - name: Test config mutation helpers
+        run: |
+          python3 -c "
+          from hermes_xmpp_plugin_common import enable_plugin, disable_plugin, add_default_xmpp_config
+          base = '''plugins:
+            enabled:
+              - foo
+          '''
+          assert 'platforms/xmpp' in enable_plugin(base)
+          assert 'platforms/xmpp' not in disable_plugin(enable_plugin(base))
+          result = add_default_xmpp_config(enable_plugin(''))
+          assert 'xmpp:' in result
+          print('Config mutations OK')
+          "
