@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.6] - 2026-09-11
+
+### Fixed
+- **Duplicate reply delivery on XMPP (partial preview + full final).** The
+  gateway's stream consumer ran on XMPP turns even though XMPP has no
+  message-editing transport (`edit_message` always fails and `send()` cannot
+  return a message id). The consumer therefore sent a partial first message
+  it could never update, and when its finalize confirmation did not land
+  before the gateway's short wait expired, the gateway also sent the complete
+  response, so the same text arrived twice. The adapter now declares
+  `SUPPORTS_MESSAGE_EDITING = False`, which is the gateway's documented gate
+  for non-editable platforms (the same declaration QQ, Signal, BlueBubbles,
+  and WeChat already make): streaming is skipped entirely and every reply is
+  delivered exactly once. Tool progress, commentary, typing indicators, and
+  voice replies are unaffected; they are delivered through separate paths.
+
 ## [1.2.5] - 2026-09-10
 
 ### Fixed

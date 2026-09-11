@@ -217,6 +217,18 @@ class XMPPAdapter(BasePlatformAdapter):
       - Outgoing voice/audio messages via the Hermes core TTS tool
     """
 
+    # XMPP has no message-editing transport (edit_message always fails, and
+    # send() cannot return a message id). Declaring this keeps the gateway
+    # from running its stream consumer for XMPP: without it, the consumer
+    # sent a partial first message it could never update, then re-delivered
+    # the rest at end of turn, and when its finalize confirmation did not
+    # land the gateway sent the full response again on top (duplicate
+    # delivery, the documented partial + final shape). Skipping streaming
+    # costs nothing here: there is no edit transport to stream through, and
+    # tool progress and commentary are delivered as separate messages
+    # regardless.
+    SUPPORTS_MESSAGE_EDITING = False
+
     def __init__(self, config, **kwargs):
         platform = Platform("xmpp")
         super().__init__(config=config, platform=platform)
