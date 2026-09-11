@@ -12,6 +12,7 @@ from hermes_xmpp_plugin_common import (
     enable_plugin,
     get_hermes_home,
     get_profile_dir,
+    is_plugin_enabled,
 )
 
 
@@ -45,21 +46,21 @@ def test_get_profile_dir_named():
 def test_enable_plugin_creates_block():
     result = enable_plugin("")
     assert "plugins:" in result
-    assert "- platforms/xmpp" in result
+    assert "- xmpp-platform" in result
 
 
 def test_disable_plugin_removes():
-    config = "plugins:\n  enabled:\n    - platforms/xmpp\n"
+    config = "plugins:\n  enabled:\n    - xmpp-platform\n"
     result = disable_plugin(config)
-    assert "platforms/xmpp" not in result
+    assert "xmpp-platform" not in result
     # Empty plugins block is removed to avoid leftover clutter.
     assert "plugins:" not in result
 
 
 def test_disable_plugin_preserves_other_plugins():
-    config = "plugins:\n  enabled:\n    - platforms/xmpp\n    - platforms/other\n"
+    config = "plugins:\n  enabled:\n    - xmpp-platform\n    - platforms/other\n"
     result = disable_plugin(config)
-    assert "platforms/xmpp" not in result
+    assert "xmpp-platform" not in result
     assert "- platforms/other" in result
     assert "plugins:" in result
 
@@ -116,7 +117,7 @@ stt:
 
 
 def test_normalize_allowed_users():
-    from install_xmpp_plugin import normalize_allowed_users
+    from hermes_xmpp_plugin_common import normalize_allowed_users
 
     assert normalize_allowed_users("") == ""
     assert normalize_allowed_users("   ") == ""
@@ -152,7 +153,7 @@ def test_upsert_env_line_inserts_updates_dedupes():
 
 def test_append_env_credentials_writes_allowed_users(tmp_path):
     """New install writes XMPP_ALLOWED_USERS alongside credentials."""
-    import install_xmpp_plugin as inst
+    import hermes_xmpp_plugin_common as inst
 
     env_path = tmp_path / ".env"
     inst.append_env_credentials(
@@ -166,7 +167,7 @@ def test_append_env_credentials_writes_allowed_users(tmp_path):
 
 def test_append_env_credentials_updates_existing_allowed_users(tmp_path):
     """Reinstall with a changed list upserts in place; unchanged list rewrites nothing."""
-    import install_xmpp_plugin as inst
+    import hermes_xmpp_plugin_common as inst
 
     env_path = tmp_path / ".env"
     env_path.write_text(
@@ -251,7 +252,7 @@ def test_add_default_xmpp_config_ignores_platform_toolsets_xmpp():
 
 def test_append_env_credentials_writes_allow_all(tmp_path):
     """allow_all_users=True writes XMPP_ALLOW_ALL_USERS=true."""
-    import install_xmpp_plugin as inst
+    import hermes_xmpp_plugin_common as inst
 
     env_path = tmp_path / ".env"
     inst.append_env_credentials(
@@ -263,7 +264,7 @@ def test_append_env_credentials_writes_allow_all(tmp_path):
 
 def test_append_env_credentials_allowlist_clears_stale_allow_all(tmp_path):
     """An explicit allowlist clears a stale allow-all flag from a prior install."""
-    import install_xmpp_plugin as inst
+    import hermes_xmpp_plugin_common as inst
 
     env_path = tmp_path / ".env"
     env_path.write_text('XMPP_ALLOW_ALL_USERS="true"\n')
@@ -277,7 +278,7 @@ def test_append_env_credentials_allowlist_clears_stale_allow_all(tmp_path):
 
 def test_append_env_credentials_no_allowlist_clears_stale_allow_all(tmp_path):
     """No allowlist and no allow-all clears a stale allow-all flag (deny-all)."""
-    import install_xmpp_plugin as inst
+    import hermes_xmpp_plugin_common as inst
 
     env_path = tmp_path / ".env"
     env_path.write_text('XMPP_ALLOW_ALL_USERS="true"\n')
@@ -288,7 +289,7 @@ def test_append_env_credentials_no_allowlist_clears_stale_allow_all(tmp_path):
 
 def test_append_env_credentials_seeds_home_channel_from_first_allowed(tmp_path):
     """Fresh install seeds XMPP_HOME_CHANNEL from the first allowed user."""
-    import install_xmpp_plugin as inst
+    import hermes_xmpp_plugin_common as inst
 
     env_path = tmp_path / ".env"
     inst.append_env_credentials(
@@ -301,7 +302,7 @@ def test_append_env_credentials_seeds_home_channel_from_first_allowed(tmp_path):
 
 def test_append_env_credentials_existing_home_channel_wins(tmp_path):
     """An existing XMPP_HOME_CHANNEL (user- or /sethome-set) is never overwritten."""
-    import install_xmpp_plugin as inst
+    import hermes_xmpp_plugin_common as inst
 
     env_path = tmp_path / ".env"
     env_path.write_text(
@@ -320,7 +321,7 @@ def test_append_env_credentials_existing_home_channel_wins(tmp_path):
 
 def test_append_env_credentials_no_allowlist_no_home_seed(tmp_path):
     """Empty allowlist -> no XMPP_HOME_CHANNEL seed."""
-    import install_xmpp_plugin as inst
+    import hermes_xmpp_plugin_common as inst
 
     env_path = tmp_path / ".env"
     inst.append_env_credentials(env_path, "bot@x.com", "pw", home_channel="")
@@ -342,7 +343,7 @@ def test_disable_plugin_luna_shape_duplicate_plugins_blocks():
         "_config_version: 39\n"
         "plugins:\n"
         "  enabled:\n"
-        "    - platforms/xmpp\n"
+        "    - xmpp-platform\n"
         "\n"
         "platforms:\n"
         "  xmpp:\n"
@@ -352,7 +353,7 @@ def test_disable_plugin_luna_shape_duplicate_plugins_blocks():
     from hermes_xmpp_plugin_common import is_plugin_enabled
 
     assert not is_plugin_enabled(result)
-    assert "platforms/xmpp" not in result
+    assert "xmpp-platform" not in result
     # The stale empty flow-style block is dropped too.
     assert result.count("plugins:") == 0
 
@@ -379,7 +380,7 @@ def test_enable_plugin_luna_shape_deduplicates_stale_block():
     assert is_plugin_enabled(result)
     assert result.count("plugins:") == 1
     # other/plugin preserved, xmpp appended after it.
-    assert "other/plugin" in result and "platforms/xmpp" in result
+    assert "other/plugin" in result and "xmpp-platform" in result
 
 
 def test_disable_plugin_preserves_nonempty_other_blocks():
@@ -389,7 +390,7 @@ def test_disable_plugin_preserves_nonempty_other_blocks():
         "  enabled: []\n"
         "plugins:\n"
         "  enabled:\n"
-        "    - platforms/xmpp\n"
+        "    - xmpp-platform\n"
         "    - other/plugin\n"
     )
     result = disable_plugin(config)
@@ -397,7 +398,7 @@ def test_disable_plugin_preserves_nonempty_other_blocks():
 
     assert not is_plugin_enabled(result)
     assert "other/plugin" in result
-    assert "platforms/xmpp" not in result
+    assert "xmpp-platform" not in result
 
 
 def test_enable_disable_roundtrip_luna_shape():
@@ -438,38 +439,51 @@ def test_enable_disable_roundtrip_luna_shape():
     assert "xmpp" not in disabled
 
 
-def test_root_common_shim_reexports_vendored_module():
-    """Repo-root hermes_xmpp_plugin_common re-exports the vendored copy."""
-    from hermes_xmpp_plugin_common_vendored import append_env_credentials as _v
+def test_enable_plugin_migrates_legacy_key():
+    """Enabling migrates a legacy platforms/xmpp entry to the canonical key.
 
-    import hermes_xmpp_plugin_common as root
+    Configs written by the old copy-based installer carry `platforms/xmpp`;
+    enabling must leave exactly one key for this plugin, not both.
+    """
+    legacy = "plugins:\n  enabled:\n    - platforms/xmpp\n    - other/plugin\n"
+    result = enable_plugin(legacy)
+    assert "xmpp-platform" in result
+    assert "platforms/xmpp" not in result
+    assert "other/plugin" in result
 
-    # The shim loads the vendored file directly (no package __init__ -> no
-    # adapter/httpx import chain) and re-exports the same function objects.
-    assert root.append_env_credentials is _v
-    for name in ("add_default_xmpp_config", "enable_plugin", "disable_plugin",
-                 "normalize_allowed_users", "add_voice_and_stt_defaults",
-                 "is_plugin_enabled", "remove_xmpp_config"):
-        assert callable(getattr(root, name)), name
+
+def test_is_plugin_enabled_accepts_legacy_key():
+    """Either key counts as enabled so an old config is never double-enabled."""
+    assert is_plugin_enabled("plugins:\n  enabled:\n    - xmpp-platform\n")
+    assert is_plugin_enabled("plugins:\n  enabled:\n    - platforms/xmpp\n")
+    assert not is_plugin_enabled("plugins:\n  enabled:\n    - other/plugin\n")
+
+
+def test_disable_plugin_removes_both_keys():
+    """Disabling removes the canonical and the legacy key."""
+    text = "plugins:\n  enabled:\n    - xmpp-platform\n    - platforms/xmpp\n"
+    result = disable_plugin(text)
+    assert "xmpp-platform" not in result
+    assert "platforms/xmpp" not in result
 
 
 def test_post_install_enable_plugin_in_config(tmp_path):
     """post_install.enable_plugin_in_config enables + adds defaults idempotently."""
     import sys
-    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "xmpp_plugin_source"))
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
     import post_install
 
     config = tmp_path / "config.yaml"
     config.write_text("plugins:\n  enabled: []\n")
     post_install.enable_plugin_in_config(config, add_defaults=True)
     text = config.read_text()
-    assert "platforms/xmpp" in text
+    assert "xmpp-platform" in text
     assert "omemo_enabled: true" in text
 
     # Re-run: idempotent, no duplicate enable
     post_install.enable_plugin_in_config(config, add_defaults=True)
     text2 = config.read_text()
-    assert text2.count("platforms/xmpp") == text.count("platforms/xmpp")
+    assert text2.count("xmpp-platform") == text.count("xmpp-platform")
 
 
 def test_post_install_seeds_home_and_allowlist(tmp_path):

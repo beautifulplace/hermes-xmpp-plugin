@@ -206,21 +206,43 @@ def _all_enabled_items(config_text: str) -> list[str]:
     return items
 
 
+# The plugin's canonical ``plugins.enabled`` key: the native installer
+# (``hermes plugins install``) derives it from the plugin manifest name, so
+# ``xmpp-platform`` is what modern installs record. ``platforms/xmpp`` is the
+# legacy key written by older copy-based installers and is cleaned up when
+# seen.
+PLUGIN_ENABLED_KEY = "xmpp-platform"
+LEGACY_PLUGIN_ENABLED_KEY = "platforms/xmpp"
+
+
 def is_plugin_enabled(config_text: str) -> bool:
-    """Return True if platforms/xmpp is in plugins.enabled in any plugins block."""
-    return "platforms/xmpp" in _all_enabled_items(config_text)
+    """Return True if the plugin is in plugins.enabled in any plugins block.
+
+    Accepts both the canonical ``xmpp-platform`` key and the legacy
+    ``platforms/xmpp`` key so a config written by an older installer is
+    recognized instead of being enabled twice.
+    """
+    items = _all_enabled_items(config_text)
+    return PLUGIN_ENABLED_KEY in items or LEGACY_PLUGIN_ENABLED_KEY in items
 
 
 def enable_plugin(config_text: str) -> str:
-    """Add platforms/xmpp to plugins.enabled, creating the block if needed.
+    """Add the canonical plugin key to plugins.enabled, creating the block if needed.
 
-    With duplicate 'plugins:' blocks (e.g. an empty one left by profile
-    creation plus an installer-written one), YAML's last-wins rule applies,
-    so the item is appended to the LAST block's enabled list and stale
+    A legacy ``platforms/xmpp`` entry from an older copy-based installer is
+    removed in the same pass so the enabled list carries exactly one key for
+    this plugin. With duplicate 'plugins:' blocks (e.g. an empty one left by
+    profile creation plus an installer-written one), YAML's last-wins rule
+    applies, so the item is added to the LAST block's enabled list and stale
     empty-list plugins blocks before it are dropped.
     """
-    if is_plugin_enabled(config_text):
+    if LEGACY_PLUGIN_ENABLED_KEY in _all_enabled_items(config_text):
+        config_text = _strip_legacy_enabled_key(config_text)
+    items_now = _all_enabled_items(config_text)
+    if PLUGIN_ENABLED_KEY in items_now:
         return config_text
+    # A legacy entry was the only key: replacing it above may have emptied the
+    # list, so fall through and append the canonical key.
 
     blocks = _iter_plugin_blocks(config_text)
     if blocks:
@@ -242,20 +264,20 @@ def enable_plugin(config_text: str) -> str:
             if list_match is None:  # pragma: no cover - verified by the branch test
                 raise AssertionError("unreachable: block-style list verified above")
             indent = list_match.group(1)[: -len(list_match.group(1).lstrip())] or "    "
-            new_block = block.rstrip() + f"\n{indent}- platforms/xmpp"
+            new_block = block.rstrip() + f"\n{indent}- {PLUGIN_ENABLED_KEY}"
             lines[start:end] = new_block.splitlines()
         elif items:
             # Non-empty flow-style list: convert to block style.
             rendered = "enabled:\n" + "\n".join(f"    - {item}" for item in items)
             new_block = re.sub(
                 r"enabled:\s*\[[^\]]*\]", rendered, block, count=1
-            ).rstrip() + "\n    - platforms/xmpp"
+            ).rstrip() + f"\n    - {PLUGIN_ENABLED_KEY}"
             lines[start:end] = new_block.splitlines()
         elif re.search(r"^\s+enabled:\s*\[\s*\]\s*$", block, re.MULTILINE):
             # Empty flow-style list: convert to block style with the new item.
             new_block = re.sub(
                 r"enabled:\s*\[\s*\]",
-                "enabled:\n    - platforms/xmpp",
+                f"enabled:\n    - {PLUGIN_ENABLED_KEY}",
                 block,
                 count=1,
                 flags=re.MULTILINE,
@@ -263,17 +285,17 @@ def enable_plugin(config_text: str) -> str:
             lines[start:end] = new_block.splitlines()
         elif re.search(r"^\s+enabled:\s*$", block, re.MULTILINE):
             # Empty block-style list: fill it.
-            new_block = block.rstrip() + "\n    - platforms/xmpp"
+            new_block = block.rstrip() + f"\n    - {PLUGIN_ENABLED_KEY}"
             lines[start:end] = new_block.splitlines()
         else:
             # plugins block without an enabled key: add one.
-            lines[start:end] = block_lines + ["  enabled:", "    - platforms/xmpp"]
+            lines[start:end] = block_lines + ["  enabled:", f"    - {PLUGIN_ENABLED_KEY}"]
 
         result = "\n".join(lines)
         result = re.sub(r"\n\n\n+", "\n\n", result).rstrip("\n")
         return result + ("\n" if config_text.endswith("\n") else "\n")
 
-    new_plugins_block = "plugins:\n  enabled:\n    - platforms/xmpp\n"
+    new_plugins_block = f"plugins:\n  enabled:\n    - {PLUGIN_ENABLED_KEY}\n"
 
     if re.search(r"^platforms:\s*$", config_text, re.MULTILINE):
         # Insert plugins block right before platforms block.
@@ -289,14 +311,48 @@ def enable_plugin(config_text: str) -> str:
     return config_text.rstrip() + "\n\n" + new_plugins_block + "\n"
 
 
+def _strip_legacy_enabled_key(config_text: str) -> str:
+    """Remove the legacy ``platforms/xmpp`` entry from every plugins block.
+
+    Only that one entry is touched; other plugins in the list are preserved,
+    and a block left with an empty enabled list is dropped. Used by
+    :func:`enable_plugin` to migrate a config written by an older installer.
+    """
+    blocks = _iter_plugin_blocks(config_text)
+    if not blocks:
+        return config_text
+
+    lines = config_text.splitlines()
+    changed = False
+    # Last-to-first so earlier indices stay valid after deletion.
+    for start, end, block_lines in reversed(blocks):
+        if LEGACY_PLUGIN_ENABLED_KEY not in _parse_enabled_items(block_lines):
+            continue
+        changed = True
+        remaining = [
+            line for line in block_lines
+            if not re.match(r"^\s*-\s+platforms/xmpp\s*$", line)
+        ]
+        if _parse_enabled_items(remaining):
+            lines[start:end] = remaining
+        else:
+            del lines[start:end]
+
+    if not changed:
+        return config_text
+    result = re.sub(r"\n\n\n+", "\n\n", "\n".join(lines))
+    return result.rstrip("\n") + ("\n" if config_text.endswith("\n") else "\n")
+
+
 def disable_plugin(config_text: str) -> str:
-    """Remove platforms/xmpp from plugins.enabled across ALL plugins blocks.
+    """Remove the plugin from plugins.enabled across ALL plugins blocks.
 
     A config may contain duplicate 'plugins:' blocks (e.g. an empty one left
     by profile creation); the item is removed wherever it appears. Blocks
     whose enabled list is empty afterwards are dropped, so a stale empty-list
     duplicate does not survive the uninstall. A config without
-    platforms/xmpp enabled anywhere is returned unchanged.
+    Neither the canonical ``xmpp-platform`` key nor the legacy ``platforms/xmpp``
+    key present anywhere is returned unchanged.
     """
     blocks = _iter_plugin_blocks(config_text)
     if not blocks:
@@ -307,13 +363,15 @@ def disable_plugin(config_text: str) -> str:
     # Process last-to-first so earlier indices stay valid after deletion.
     for start, end, block_lines in reversed(blocks):
         items = _parse_enabled_items(block_lines)
-        if "platforms/xmpp" not in items:
+        if not ({PLUGIN_ENABLED_KEY, LEGACY_PLUGIN_ENABLED_KEY} & set(items)):
             continue
         removed = True
         remaining = [
             line
             for line in block_lines
-            if not re.match(r"^\s*-\s+platforms/xmpp\s*$", line)
+            if not re.match(
+                r"^\s*-\s+(xmpp-platform|platforms/xmpp)\s*$", line
+            )
         ]
         if _parse_enabled_items(remaining):
             lines[start:end] = remaining

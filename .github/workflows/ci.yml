@@ -21,18 +21,33 @@ jobs:
         run: .venv-ci/bin/ruff check .
 
       - name: Run tests
-        run: .venv-ci/bin/pytest tests/
+        run: .venv-ci/bin/pytest
 
-  validate-installer:
+  validate-plugin:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate install/uninstall scripts parse
+      - name: Validate plugin modules parse
         run: |
-          python3 -m py_compile install_xmpp_plugin.py
-          python3 -m py_compile uninstall_xmpp_plugin.py
+          python3 -m py_compile __init__.py
+          python3 -m py_compile adapter.py
+          python3 -m py_compile omemo_plugin.py
+          python3 -m py_compile post_install.py
           python3 -m py_compile hermes_xmpp_plugin_common.py
+
+      - name: Validate the repository root is a plugin
+        run: |
+          python3 -c "
+          import pathlib, sys
+          root = pathlib.Path('.').resolve()
+          for name in ('plugin.yaml', '__init__.py', 'adapter.py'):
+              assert (root / name).is_file(), f'missing {name} at the repository root'
+          text = (root / 'plugin.yaml').read_text()
+          assert 'name: xmpp-platform' in text, 'plugin.yaml must declare name: xmpp-platform'
+          assert 'kind: platform' in text, 'plugin.yaml must declare kind: platform'
+          print('Repository root is a valid plugin root')
+          "
 
       - name: Test config mutation helpers
         run: |
@@ -42,8 +57,8 @@ jobs:
             enabled:
               - foo
           '''
-          assert 'platforms/xmpp' in enable_plugin(base)
-          assert 'platforms/xmpp' not in disable_plugin(enable_plugin(base))
+          assert 'xmpp-platform' in enable_plugin(base)
+          assert 'xmpp-platform' not in disable_plugin(enable_plugin(base))
           result = add_default_xmpp_config(enable_plugin(''))
           assert 'xmpp:' in result
           print('Config mutations OK')
