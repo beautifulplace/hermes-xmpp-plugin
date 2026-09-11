@@ -1,5 +1,45 @@
 # Changelog
 
+## [1.3.0] - 2026-09-11
+
+### Changed
+- **The repository root is now the plugin.** `plugin.yaml`, `__init__.py`,
+  `adapter.py`, `omemo_plugin.py`, and `post_install.py` moved out of
+  `xmpp_plugin_source/` to the repository root, so Hermes manages the plugin
+  with its own commands:
+
+  ```
+  hermes plugins install beautifulplace/hermes-xmpp-plugin --enable
+  hermes plugins update xmpp-platform
+  ```
+
+  A subdirectory layout could not be installed without a `#subdir` fragment and
+  could never be updated at all, because `hermes plugins update` needs a `.git`
+  directory inside the installed plugin and a subdirectory copy never has one.
+  Upgrades now work natively; no checkout to maintain.
+
+- **Retired the copy-based installer.** `install_xmpp_plugin.py`,
+  `uninstall_xmpp_plugin.py`, and the duplicate root/plugin copy of
+  `hermes_xmpp_plugin_common.py` are gone. `post_install.py` (run after the
+  native install) covers what the core installer intentionally leaves alone:
+  dependencies, the default `platforms.xmpp` block and voice/STT defaults, the
+  allowlist, and the home channel.
+
+- **The canonical `plugins.enabled` key is `xmpp-platform`**, which is what the
+  native installer derives from the manifest name. `post_install.py` migrates a
+  legacy `platforms/xmpp` entry away instead of adding a second key, and a
+  config carrying only the legacy key still counts as enabled.
+
+### Added
+- `after-install.md`, shown by `hermes plugins install` with the two steps left
+  to do (post-install, gateway restart).
+- `scripts/install-wrapper.sh`, which installs an optional `xmpp-upgrade`
+  command. It is a thin wrapper over `hermes plugins update` plus a gateway
+  restart, and is not required for upgrading.
+
+### Fixed
+- `post_install.py` no longer prints the allowed-users line twice.
+
 ## [1.2.6] - 2026-09-11
 
 ### Fixed
