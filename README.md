@@ -115,17 +115,6 @@ Because this repository is a plugin root, upgrades work natively. If you ever se
 
 Nothing in your configuration is touched by an upgrade. Settings live in `config.yaml` and credentials in `.env`, both outside the plugin directory, so upgrades never ask you to re-enter anything.
 
-### Optional convenience wrapper
-
-If you would rather type one word, this installs a small `xmpp-upgrade` command:
-
-```bash
-./scripts/install-wrapper.sh
-xmpp-upgrade
-```
-
-The wrapper is a thin shell script around the two native commands above plus a version report. It contains no upgrade logic of its own.
-
 ## Configuration
 
 The default `platforms.xmpp` block written by `post_install.py`:
@@ -282,7 +271,7 @@ ruff check .
 python3 -m pytest
 ```
 
-Layout: `plugin.yaml`, `__init__.py`, `adapter.py`, and `omemo_plugin.py` at the repository root are the plugin Hermes installs. `hermes_xmpp_plugin_common.py` holds shared config/`.env` helpers used by `post_install.py` and the tests. `scripts/` holds development convenience wrappers, which are not part of the installed plugin.
+Layout: `plugin.yaml`, `__init__.py`, `adapter.py`, and `omemo_plugin.py` at the repository root are the plugin Hermes installs. `hermes_xmpp_plugin_common.py` holds shared config/`.env` helpers used by `post_install.py` and the tests. `scripts/release.sh` is a maintainer script for cutting releases; it is not part of the installed plugin.
 
 ## License
 

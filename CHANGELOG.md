@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.2] - 2026-09-11
+
+### Removed
+- **`scripts/install-wrapper.sh` and the `xmpp-upgrade` command it installed.**
+  It was unnecessary: installing and upgrading are already one native command
+  each (`hermes plugins install ... --enable`, `hermes plugins update
+  xmpp-platform`). It also did not work as documented: its before/after version
+  report read the first line of `hermes plugins show`, which is blank, so it
+  always printed "unknown".
+
+### Changed
+- `deps/` is gitignored. It is an artifact of a plugin install (vendored
+  dependencies inside the installed plugin directory), never repository content.
+
 ## [1.3.1] - 2026-09-11
 
 ### Fixed
@@ -48,9 +62,10 @@
 ### Added
 - `after-install.md`, shown by `hermes plugins install` with the two steps left
   to do (post-install, gateway restart).
-- `scripts/install-wrapper.sh`, which installs an optional `xmpp-upgrade`
-  command. It is a thin wrapper over `hermes plugins update` plus a gateway
-  restart, and is not required for upgrading.
+- `scripts/install-wrapper.sh`, which installed an optional `xmpp-upgrade`
+  command. **Removed in 1.3.2**: it was unnecessary (the native commands are
+  already one line each) and its version report read a blank line from
+  `hermes plugins show`. Use `hermes plugins update xmpp-platform` directly.
 
 ### Fixed
 - `post_install.py` no longer prints the allowed-users line twice.
