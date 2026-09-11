@@ -709,10 +709,6 @@ def append_env_credentials(
 
     if additions:
         print(f"Appended credentials to {env_path}")
-    if allowed_users:
-        print(f"Allowed users written to {env_path}: XMPP_ALLOWED_USERS={allowed_users}")
-    if allow_all_users:
-        print(f"Allow-all-users written to {env_path}: XMPP_ALLOW_ALL_USERS=true")
 
 
 def _env_text_changed(env_path: Path, lines: list[str]) -> bool:

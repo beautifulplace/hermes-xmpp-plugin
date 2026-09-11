@@ -115,7 +115,7 @@ def enable_plugin_in_config(
 
     text = config_path.read_text()
     if is_plugin_enabled(text):
-        print("Plugin already enabled in config.yaml (platforms/xmpp present).")
+        print("Plugin already enabled in config.yaml.")
     else:
         text = enable_plugin(text)
         print("Enabled platforms/xmpp in plugins list.")
@@ -241,7 +241,7 @@ def main(argv=None) -> int:
     if jid and password:
         print("  XMPP credentials stored in .env (not config.yaml).")
     if allowed_users:
-        print(f"Allowed users written to {env_path}: XMPP_ALLOWED_USERS={allowed_users}")
+        print(f"Allowed users: XMPP_ALLOWED_USERS={allowed_users}")
     if allow_all:
         print(f"Allow-all-users written to {env_path}: XMPP_ALLOW_ALL_USERS=true")
     if home_channel and not _env_already_has_home(env_path):
