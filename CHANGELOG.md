@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.5] - 2026-09-10
+
+### Fixed
+- **Silent OMEMO recovery key exchange now actually sends (v1.2.4 bug).**
+  `build_recovery_message` built its key-exchange stanza with an empty body,
+  but under oldmemo only the body gets encrypted, so slixmpp-omemo returned no
+  stanza at all ("produced no encrypted stanza") and the fresh key exchange
+  was never sent. A peer whose session was just dropped only recovered if it
+  happened to be online when the "please resend" notice (which carries key
+  material for the new session) arrived; otherwise every resend failed the
+  same way, producing the observed resend loop. The recovery message now
+  carries a short body ("[Hermes] re-establishing our encryption session.")
+  so the key exchange is always built and sent. Verified against
+  slixmpp-omemo 2.2.0: `encrypt_message` documents that messages without a
+  body are not considered for oldmemo encryption.
+
 ## [1.2.4] - 2026-09-10
 
 ### Fixed

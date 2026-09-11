@@ -322,10 +322,12 @@ class HermesOMEMO(XEP_0384):
 
         Real OMEMO clients recover a desynced session by sending a new key
         exchange immediately, instead of waiting for the peer's next message.
-        An OMEMO-encrypted message with an empty ``<body>`` makes
-        slixmpp-omemo build and send key material for every published device
-        of the recipient, which re-establishes the ratchet. The recipient
-        client auto-processes it silently and shows no chat entry.
+        The message needs a non-empty body: under oldmemo only the body gets
+        encrypted, so an empty body makes slixmpp-omemo return no stanza at
+        all and the key exchange is never sent (the "produced no encrypted
+        stanza" warning). The recipient client auto-processes the key
+        material and silently re-establishes the ratchet; the body text may
+        surface in some clients, which is acceptable for a recovery path.
 
         Returns the sent Message (for the caller to send a follow-up notice
         as a separate stanza), or None when encryption is unavailable.
@@ -335,7 +337,7 @@ class HermesOMEMO(XEP_0384):
             return None
         try:
             msg = client.make_message(mto=JID(recipient_bare_jid), mtype="chat")
-            msg["body"] = ""
+            msg["body"] = "[Hermes] re-establishing our encryption session."
             msg["id"] = client.new_id()
             msg.set_to(JID(recipient_bare_jid))
             msg.set_from(client.boundjid)
