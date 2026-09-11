@@ -42,13 +42,11 @@ Repository = "https://github.com/beautifulplace/hermes-xmpp-plugin"
 Issues = "https://github.com/beautifulplace/hermes-xmpp-plugin/issues"
 
 [project.scripts]
-install-hermes-xmpp-plugin = "install_xmpp_plugin:main"
-uninstall-hermes-xmpp-plugin = "uninstall_xmpp_plugin:main"
+hermes-xmpp-post-install = "post_install:main"
 
 [tool.setuptools]
 py-modules = [
-    "install_xmpp_plugin",
-    "uninstall_xmpp_plugin",
+    "post_install",
     "hermes_xmpp_plugin_common",
 ]
 
