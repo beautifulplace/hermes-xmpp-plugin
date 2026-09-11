@@ -397,7 +397,14 @@ def disable_plugin(config_text: str) -> str:
 
 
 def add_default_xmpp_config(config_text: str, allow_all_users: bool = False) -> str:
-    """Add a default platforms.xmpp block if one does not exist.
+    """Add the default platforms.xmpp block, or restore missing defaults in it.
+
+    When the block already exists this only ADDS absent keys, so an explicit
+    user choice is preserved: ``enabled: false`` is flipped on (the plugin was
+    just installed), and ``omemo_enabled`` / ``omemo_allow_untrusted`` are
+    inserted only when missing. Dropping those two keys on an existing block
+    silently disables the encryption the plugin ships with, so an OMEMO-sending
+    client gets undecryptable inbound messages.
 
     Credentials are intentionally NOT written into config.yaml; they are stored
     in the Hermes .env file instead. ``allow_all_users`` reflects the user's
@@ -420,6 +427,19 @@ def add_default_xmpp_config(config_text: str, allow_all_users: bool = False) -> 
                 config_text,
                 count=1,
                 flags=re.MULTILINE,
+            )
+
+            # Restore the default keys this function is documented to ensure.
+            # An existing block is routinely missing them: the uninstall path
+            # removes and re-adds the block, and configs written before these
+            # defaults existed never had them. Without this, a reinstall leaves
+            # OMEMO off and a client that encrypts by default produces
+            # undecryptable inbound messages (the failure that prompted this).
+            # overwrite=False keeps an explicit user choice (omemo_enabled:
+            # false) intact; only absent keys are added.
+            result = _upsert_xmpp_key(result, "omemo_enabled", "true", overwrite=False)
+            result = _upsert_xmpp_key(
+                result, "omemo_allow_untrusted", "true", overwrite=False
             )
             return _upsert_xmpp_allow_all_users(result, allow_all)
 
@@ -447,19 +467,23 @@ def add_default_xmpp_config(config_text: str, allow_all_users: bool = False) -> 
     return config_text.rstrip() + "\n\n" + default_block + "\n"
 
 
-def _upsert_xmpp_allow_all_users(config_text: str, allow_all: str) -> str:
-    """Set allow_all_users within the platforms.xmpp block.
+def _upsert_xmpp_key(
+    config_text: str, key: str, value: str, *, overwrite: bool = True
+) -> str:
+    """Set ``key`` inside the platforms.xmpp block.
 
-    Replaces the value in place when the key is present, otherwise appends it
-    after the last key in the xmpp block. Returns config_text unchanged when
-    no platforms.xmpp block is found.
+    Replaces the value in place when the key is present and *overwrite* is
+    True; appends the key after the last existing key otherwise. With
+    ``overwrite=False`` an existing value is left alone, so an explicit user
+    choice (e.g. ``omemo_enabled: false``) is never clobbered. Returns
+    config_text unchanged when no platforms.xmpp block is found.
 
     The search is scoped to the ``platforms:`` block ONLY. A naive search for
     the first ``xmpp:`` line anywhere in the file can match the ``xmpp:`` key
-    inside ``platform_toolsets:`` (a list of tool names), injecting
-    ``allow_all_users`` into the middle of that list and corrupting the YAML
-    (``while parsing a block collection``). The installer only ever creates
-    the ``platforms.xmpp`` block, so that is the only one it may touch.
+    inside ``platform_toolsets:`` (a list of tool names), injecting the key
+    into the middle of that list and corrupting the YAML (``while parsing a
+    block collection``). The installer only ever creates the
+    ``platforms.xmpp`` block, so that is the only one it may touch.
     """
     # Locate the top-level platforms: block.
     pstart, pend = _find_block_bounds(config_text, "platforms")
@@ -487,18 +511,25 @@ def _upsert_xmpp_allow_all_users(config_text: str, allow_all: str) -> str:
             xend = i
             break
     block = "\n".join(lines[xstart:xend])
-    if re.search(rf"^{indent}\s+allow_all_users:", block, re.MULTILINE):
+    if re.search(rf"^{indent}\s+{re.escape(key)}:", block, re.MULTILINE):
+        if not overwrite:
+            return config_text
         block = re.sub(
-            rf"^({indent}\s+allow_all_users:\s*).*$",
-            lambda m: m.group(1) + allow_all,
+            rf"^({indent}\s+{re.escape(key)}:\s*).*$",
+            lambda m: m.group(1) + value,
             block,
             count=1,
             flags=re.MULTILINE,
         )
     else:
-        block = block.rstrip() + f"\n{indent}  allow_all_users: {allow_all}"
+        block = block.rstrip() + f"\n{indent}  {key}: {value}"
     lines[xstart:xend] = block.splitlines()
     return "\n".join(lines)
+
+
+def _upsert_xmpp_allow_all_users(config_text: str, allow_all: str) -> str:
+    """Set allow_all_users within the platforms.xmpp block (overwriting)."""
+    return _upsert_xmpp_key(config_text, "allow_all_users", allow_all)
 
 
 

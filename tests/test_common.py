@@ -499,3 +499,49 @@ def test_post_install_seeds_home_and_allowlist(tmp_path):
     assert 'XMPP_ALLOWED_USERS="a@x.com,b@y.net"' in text
     assert 'XMPP_HOME_CHANNEL="a@x.com"' in text
     assert 'XMPP_USER_JID="bot@x.com"' in text
+
+
+def test_add_default_xmpp_config_restores_missing_omemo_keys():
+    """A reinstall into an existing block restores the OMEMO defaults.
+
+    Regression: the uninstall path removes the platforms.xmpp keys and the
+    reinstall wrote a block with only `enabled` + `allow_all_users`, silently
+    disabling OMEMO. A client that encrypts by default then sends
+    undecryptable messages.
+    """
+    existing = (
+        "platforms:\n"
+        "  xmpp:\n"
+        "    enabled: true\n"
+        "    allow_all_users: false\n"
+    )
+    result = add_default_xmpp_config(existing, allow_all_users=False)
+    assert "omemo_enabled: true" in result
+    assert "omemo_allow_untrusted: true" in result
+    assert "allow_all_users: false" in result
+    # The block must not be duplicated.
+    assert result.count("platforms:") == 1
+    assert result.count("  xmpp:") == 1
+
+
+def test_add_default_xmpp_config_keeps_explicit_omemo_off():
+    """An explicit omemo_enabled: false is a user choice and is preserved."""
+    existing = (
+        "platforms:\n"
+        "  xmpp:\n"
+        "    enabled: true\n"
+        "    omemo_enabled: false\n"
+        "    omemo_allow_untrusted: false\n"
+    )
+    result = add_default_xmpp_config(existing, allow_all_users=False)
+    assert "omemo_enabled: false" in result
+    assert "omemo_allow_untrusted: false" in result
+    assert "omemo_enabled: true" not in result
+
+
+def test_add_default_xmpp_config_is_idempotent_with_restored_keys():
+    """Running twice restores the keys once and duplicates nothing."""
+    existing = "platforms:\n  xmpp:\n    enabled: true\n"
+    once = add_default_xmpp_config(existing, allow_all_users=False)
+    twice = add_default_xmpp_config(once, allow_all_users=False)
+    assert once == twice

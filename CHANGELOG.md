@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.1] - 2026-09-11
+
+### Fixed
+- **`post_install.py` silently disabled OMEMO on an existing config.** When
+  `platforms.xmpp` already existed the installer only flipped `enabled` to true
+  and set `allow_all_users`; it never restored `omemo_enabled` or
+  `omemo_allow_untrusted`. Uninstalling removes those keys and reinstalling left
+  them absent, so the plugin came up with OMEMO off while a client that encrypts
+  by default kept sending encrypted stanzas. The result was an undecryptable
+  inbound message (empty body, dropped) followed by the recovery notice. The
+  default keys are now restored on an existing block. An explicit
+  `omemo_enabled: false` is a user choice and is still preserved: only absent
+  keys are added.
+
+
 ## [1.3.0] - 2026-09-11
 
 ### Changed
