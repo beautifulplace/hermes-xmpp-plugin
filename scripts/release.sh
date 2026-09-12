@@ -55,7 +55,7 @@ fi
 echo "Tagging ${TAG}..."
 git tag -a "${TAG}" -m "Hermes XMPP Plugin ${VERSION}"
 
-echo "Pushing the forge (origin) and GitHub..."
+echo "Pushing origin and GitHub..."
 git push origin main
 git push github main
 git push origin "${TAG}"
