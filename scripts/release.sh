@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
-# Cut a release: verify versions agree, tag, push both remotes, create the
+# Cut a release: verify versions agree, tag, push the public remote, create the
 # GitHub release from the matching CHANGELOG section.
 #
-# Usage: ./scripts/release.sh 1.3.0
+# Run this from the PUBLIC clone ONLY. This repository is the public mirror; the
+# private working copy is a separate clone with its own remote. Never add a
+# public remote to the private clone: pushing one tree to both forges is how
+# private-forge metadata and private-only files (AGENTS.md) reached the public
+# repo before.
+#
+# Usage: ./scripts/release.sh 1.3.3
 set -euo pipefail
 
 VERSION="${1:-}"
@@ -55,11 +61,9 @@ fi
 echo "Tagging ${TAG}..."
 git tag -a "${TAG}" -m "Hermes XMPP Plugin ${VERSION}"
 
-echo "Pushing origin and GitHub..."
+echo "Pushing origin..."
 git push origin main
-git push github main
 git push origin "${TAG}"
-git push github "${TAG}"
 
 echo "Extracting release notes from CHANGELOG.md..."
 NOTES="$(mktemp)"
