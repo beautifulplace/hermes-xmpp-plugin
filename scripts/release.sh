@@ -10,6 +10,7 @@
 #
 # Usage: ./scripts/release.sh 1.3.3
 set -euo pipefail
+GW_CMD="gateway restart"
 
 VERSION="${1:-}"
 if [[ -z "${VERSION}" ]]; then
@@ -100,14 +101,14 @@ fi
   echo '```'
   echo "hermes plugins install rebelcommand/hermes-xmpp-plugin --enable"
   echo "python3 ~/.hermes/plugins/xmpp-platform/post_install.py"
-  echo "hermes gateway restart"
+  echo "hermes $GW_CMD"
   echo '```'
   echo ""
   echo "### Upgrade"
   echo ""
   echo '```'
   echo "hermes plugins update xmpp-platform"
-  echo "hermes gateway restart"
+  echo "hermes $GW_CMD"
   echo '```'
 } > "${NOTES}.final"
 
