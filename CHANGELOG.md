@@ -38,7 +38,7 @@
   with its own commands:
 
   ```
-  hermes plugins install beautifulplace/hermes-xmpp-plugin --enable
+  hermes plugins install rebelcommand/hermes-xmpp-plugin --enable
   hermes plugins update xmpp-platform
   ```
 
@@ -149,7 +149,7 @@
 
 ### Added
 - **`post_install.py` ships inside the plugin** for users who install via
-  `hermes plugins install beautifulplace/hermes-xmpp-plugin/xmpp_plugin_source`.
+  `hermes plugins install rebelcommand/hermes-xmpp-plugin/xmpp_plugin_source`.
   That core command copies files, scans, and prompts for JID/password but
   intentionally skips dependencies and defaults; the post-install script
   completes the setup: deps into the plugin's own `deps/` dir, default

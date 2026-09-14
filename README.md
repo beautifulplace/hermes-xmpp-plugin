@@ -42,7 +42,7 @@ This repository IS a Hermes plugin: the plugin manifest (`plugin.yaml`), the ada
 One command, using the Hermes plugin installer:
 
 ```bash
-hermes plugins install beautifulplace/hermes-xmpp-plugin --enable
+hermes plugins install rebelcommand/hermes-xmpp-plugin --enable
 hermes plugins enable xmpp-platform   # only if you installed without --enable
 ```
 
@@ -75,7 +75,7 @@ It is safe to re-run: existing `.env` values win, config defaults are only added
 Hermes profiles are independent. Install into the profile you want the bot in:
 
 ```bash
-hermes -p my-bot plugins install beautifulplace/hermes-xmpp-plugin --enable
+hermes -p my-bot plugins install rebelcommand/hermes-xmpp-plugin --enable
 hermes -p my-bot gateway restart
 ```
 
@@ -90,7 +90,7 @@ python3 ~/.hermes/plugins/xmpp-platform/post_install.py --profile my-bot
 For headless setups, skip every prompt:
 
 ```bash
-hermes plugins install beautifulplace/hermes-xmpp-plugin --enable
+hermes plugins install rebelcommand/hermes-xmpp-plugin --enable
 python3 ~/.hermes/plugins/xmpp-platform/post_install.py \
   --non-interactive \
   --allowed-users "you@example.com"
@@ -277,4 +277,4 @@ Layout: `plugin.yaml`, `__init__.py`, `adapter.py`, and `omemo_plugin.py` at the
 
 MIT License - see [LICENSE](LICENSE).
 
-Copyright (c) 2026 beautifulplace.
+Copyright (c) 2026 rebelcommand.

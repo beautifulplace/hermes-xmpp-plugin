@@ -7,7 +7,7 @@ description: >
   Connects to an XMPP server and relays messages between XMPP users
   and the Hermes agent. OMEMO end-to-end encryption is enabled by default
   when slixmpp-omemo is installed.
-author: beautifulplace
+author: rebelcommand
 requires_env:
   - name: XMPP_USER_JID
     description: "XMPP JID for the bot account (e.g. hermes@example.com)"

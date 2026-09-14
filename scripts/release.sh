@@ -83,7 +83,7 @@ fi
   echo "### Install"
   echo ""
   echo '```'
-  echo "hermes plugins install beautifulplace/hermes-xmpp-plugin --enable"
+  echo "hermes plugins install rebelcommand/hermes-xmpp-plugin --enable"
   echo "python3 ~/.hermes/plugins/xmpp-platform/post_install.py"
   echo "hermes gateway restart"
   echo '```'
@@ -98,7 +98,7 @@ fi
 
 if command -v gh >/dev/null 2>&1; then
   gh release create "${TAG}" \
-    -R beautifulplace/hermes-xmpp-plugin \
+    -R rebelcommand/hermes-xmpp-plugin \
     --title "Hermes XMPP Plugin ${VERSION}" \
     --notes-file "${NOTES}.final"
   echo "GitHub release created."

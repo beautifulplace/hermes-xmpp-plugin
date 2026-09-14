@@ -9,10 +9,10 @@ description = "XMPP gateway adapter for Hermes Agent with optional OMEMO encrypt
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "beautifulplace"},
+    {name = "rebelcommand"},
 ]
 maintainers = [
-    {name = "beautifulplace"},
+    {name = "rebelcommand"},
 ]
 requires-python = ">=3.10"
 keywords = ["hermes", "xmpp", "omemo", "chatbot", "gateway", "messaging"]
@@ -38,8 +38,8 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/NousResearch/hermes-agent"
 Documentation = "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/"
-Repository = "https://github.com/beautifulplace/hermes-xmpp-plugin"
-Issues = "https://github.com/beautifulplace/hermes-xmpp-plugin/issues"
+Repository = "https://github.com/rebelcommand/hermes-xmpp-plugin"
+Issues = "https://github.com/rebelcommand/hermes-xmpp-plugin/issues"
 
 [project.scripts]
 hermes-xmpp-post-install = "post_install:main"
