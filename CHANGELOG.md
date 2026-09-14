@@ -3,12 +3,17 @@
 ## [1.3.4] - 2026-09-13
 
 ### Changed
+- `scripts/release.sh` pushes only the public remote. It must be run from this clone; the private working copy is a separate clone and must never carry a public remote.
+
+
+## [1.3.3] - 2026-09-13
+
+### Changed
 - Repository URLs updated after the GitHub account was renamed. The install
   commands in the README, the `Repository`/`Issues` links, the author metadata,
   and the release script now point at the new location.
 
 ### Notes
-- `scripts/release.sh` pushes only the public remote. It must be run from this clone; the private working copy is a separate clone and must never carry a public remote.
 - Commits are now authored
   `rebelcommand <37156920+rebelcommand@users.noreply.github.com>` (the ID-based
   form, which keeps attribution across a rename).
