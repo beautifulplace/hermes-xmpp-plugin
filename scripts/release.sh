@@ -36,9 +36,16 @@ check "plugin.yaml"    "$(grep -m1 '^version' plugin.yaml)"
 check "__init__.py"    "$(grep -m1 '__version__' __init__.py)"
 if ! grep -q "^## \[${VERSION}\]" CHANGELOG.md; then
   echo "  MISSING CHANGELOG section ## [${VERSION}]" >&2
+  echo "       (add a NEW section; never relabel an existing version's header)" >&2
   fail=1
 else
-  echo "  ok  CHANGELOG.md"
+  first="$(grep -m1 '^## \[' CHANGELOG.md)"
+  if [[ "${first}" != *"${VERSION}"* ]]; then
+    echo "  CHANGELOG is not newest-first: first section is '${first}', expected ${VERSION}" >&2
+    fail=1
+  else
+    echo "  ok  CHANGELOG.md (first section is ${VERSION})"
+  fi
 fi
 
 if [[ "${fail}" -ne 0 ]]; then
@@ -53,12 +60,16 @@ if [[ -n "$(git status --porcelain)" ]]; then
 fi
 
 TAG="v${VERSION}"
+# Tag the commit that IS this release content. Editing release content after
+# tagging leaves the tag pointing at a snapshot its notes do not describe, which
+# then needs a force-update. Check the changelog is final first (above).
 if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
-  echo "Tag ${TAG} already exists." >&2
+  echo "Tag ${TAG} already exists. If you changed release content after tagging," >&2
+  echo "move it deliberately: git tag -f -a ${TAG} -m '...' HEAD && git push --force origin ${TAG}" >&2
   exit 1
 fi
 
-echo "Tagging ${TAG}..."
+echo "Tagging ${TAG} at $(git rev-parse --short HEAD)..."
 git tag -a "${TAG}" -m "Hermes XMPP Plugin ${VERSION}"
 
 echo "Pushing origin..."
