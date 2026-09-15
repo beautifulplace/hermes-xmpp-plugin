@@ -46,6 +46,7 @@ from hermes_xmpp_plugin_common import (  # noqa: E402
     get_profile_dir,
     is_plugin_enabled,
     normalize_allowed_users,
+    validate_avatar_path,
 )
 
 DEPENDENCIES: list[tuple[str, str]] = [
@@ -212,28 +213,55 @@ def main(argv=None) -> int:
     elif allowed_users:
         home_channel = allowed_users.split(",")[0].strip()
 
-    # JID/password: normally collected by 'hermes plugins install' via
-    # requires_env prompts. If they are missing (user skipped them), ask now
-    # unless --non-interactive.
+    # JID/password: prompt with the existing value as the default so the user
+    # can keep it (Enter) or change it. Only skipped under --non-interactive.
     existing = _load_env_credentials(env_path)
     jid = existing.get("XMPP_USER_JID", "")
     password = existing.get("XMPP_PASSWORD", "")
-    if not jid and not args.non_interactive:
-        jid = input("XMPP JID for the bot account: ").strip()
-    if not password and not args.non_interactive:
+    if not args.non_interactive:
+        jid_prompt = f"XMPP JID for the bot account [{jid}]: " if jid else "XMPP JID for the bot account: "
+        jid_answer = input(jid_prompt).strip()
+        if jid_answer:
+            jid = jid_answer
+        while not jid:
+            jid = input("XMPP JID is required (e.g. hermes@example.com): ").strip()
+
         import getpass
 
-        password = getpass.getpass("XMPP password: ").strip()
+        pw_prompt = "XMPP password [Enter to keep existing]: " if password else "XMPP password: "
+        pw_answer = getpass.getpass(pw_prompt).strip()
+        if pw_answer:
+            password = pw_answer
+        while not password:
+            password = getpass.getpass("XMPP password is required: ").strip()
     if not jid or not password:
         print(
             "WARNING: XMPP_USER_JID / XMPP_PASSWORD are not both set in "
             f"{env_path}. Set them manually or the adapter cannot connect."
         )
 
+    avatar_path = existing.get("XMPP_AVATAR_PATH", "")
+    if not args.non_interactive:
+        print(
+            "\nOptional avatar image. Recommended: a square PNG or JPEG, "
+            "at least 480x480 pixels. The plugin will crop to a centered "
+            "square and resize to 480x480."
+        )
+        if avatar_path:
+            avatar_path = input(f"Avatar file path [{avatar_path}]: ").strip() or avatar_path
+        else:
+            avatar_path = input("Avatar file path (leave blank for none): ").strip()
+        ok, msg = validate_avatar_path(avatar_path)
+        while not ok:
+            print(f"WARNING: {msg}")
+            avatar_path = input("Enter a valid avatar file path (or leave blank for none): ").strip()
+            ok, msg = validate_avatar_path(avatar_path)
+
     append_env_credentials(
         env_path,
         jid=jid,
         password=password,
+        avatar_path=avatar_path,
         allowed_users=allowed_users,
         allow_all_users=allow_all,
         home_channel=home_channel,

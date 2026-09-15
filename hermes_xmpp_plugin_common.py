@@ -696,22 +696,25 @@ def append_env_credentials(
 
     existing_keys = {line.split("=", 1)[0].strip() for line in lines if "=" in line}
     additions: list[str] = []
+    upserted = False
     if "XMPP_USER_JID" not in existing_keys:
         additions.append(f'XMPP_USER_JID="{jid}"')
     if "XMPP_PASSWORD" not in existing_keys:
         additions.append(f'XMPP_PASSWORD="{password}"')
-    if avatar_path and "XMPP_AVATAR_PATH" not in existing_keys:
-        additions.append(f'XMPP_AVATAR_PATH="{avatar_path}"')
+    if avatar_path:
+        # Upsert so a corrected path from a later install replaces a stale one;
+        # the old skip-when-present rule silently dropped a corrected value.
+        lines, avatar_upserted = _upsert_env_line(lines, "XMPP_AVATAR_PATH", avatar_path)
+        upserted = upserted or avatar_upserted
 
     if allowed_users:
-        lines, upserted = _upsert_env_line(lines, "XMPP_ALLOWED_USERS", allowed_users)
+        lines, allowed_upserted = _upsert_env_line(lines, "XMPP_ALLOWED_USERS", allowed_users)
+        upserted = upserted or allowed_upserted
         # An explicit allowlist must not be silently defeated by a stale
         # allow-all flag from a previous install. Clear it so the allowlist
         # actually takes effect.
         lines, cleared = _upsert_env_line(lines, "XMPP_ALLOW_ALL_USERS", "false")
         upserted = upserted or cleared
-    else:
-        upserted = False
 
     if allow_all_users:
         lines, allow_all_upserted = _upsert_env_line(
@@ -759,6 +762,24 @@ def _load_env_credentials(env_path: Path) -> dict[str, str]:
             continue
         key, value = line.split("=", 1)
         key = key.strip()
-        if key in ("XMPP_USER_JID", "XMPP_PASSWORD", "XMPP_ALLOWED_USERS"):
+        if key in ("XMPP_USER_JID", "XMPP_PASSWORD", "XMPP_ALLOWED_USERS", "XMPP_AVATAR_PATH"):
             result[key] = value.strip().strip('"\'')
     return result
+
+
+def validate_avatar_path(path: str) -> tuple[bool, str]:
+    """Return (ok, message) for a proposed avatar path.
+
+    A blank path is always valid (no avatar). Otherwise the file must exist
+    and be a regular file so a typo is caught at install time instead of
+    surfacing as a repeated "avatar path does not exist" warning on every
+    gateway restart.
+    """
+    if not path:
+        return True, ""
+    p = Path(path).expanduser()
+    if not p.exists():
+        return False, f"Avatar path does not exist: {p}"
+    if not p.is_file():
+        return False, f"Avatar path is not a file: {p}"
+    return True, ""

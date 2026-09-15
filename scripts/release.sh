@@ -61,9 +61,6 @@ if [[ -n "$(git status --porcelain)" ]]; then
 fi
 
 TAG="v${VERSION}"
-# Tag the commit that IS this release content. Editing release content after
-# tagging leaves the tag pointing at a snapshot its notes do not describe, which
-# then needs a force-update. Check the changelog is final first (above).
 if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
   echo "Tag ${TAG} already exists. If you changed release content after tagging," >&2
   echo "move it deliberately: git tag -f -a ${TAG} -m '...' HEAD && git push --force origin ${TAG}" >&2
@@ -73,7 +70,7 @@ fi
 echo "Tagging ${TAG} at $(git rev-parse --short HEAD)..."
 git tag -a "${TAG}" -m "Hermes XMPP Plugin ${VERSION}"
 
-echo "Pushing origin..."
+echo "Pushing the clone's own remote..."
 git push origin main
 git push origin "${TAG}"
 

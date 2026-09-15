@@ -191,6 +191,56 @@ def test_append_env_credentials_updates_existing_allowed_users(tmp_path):
     assert env_path.read_text() == text
 
 
+def test_append_env_credentials_upserts_avatar_path(tmp_path):
+    """A corrected avatar path from a later install replaces the stale value."""
+    import hermes_xmpp_plugin_common as inst
+
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        'XMPP_USER_JID="bot@x.com"\n'
+        'XMPP_PASSWORD="pw"\n'
+        'XMPP_AVATAR_PATH="/wrong/avatar.png"\n'
+    )
+
+    inst.append_env_credentials(
+        env_path, "bot@x.com", "pw", avatar_path="/right/avatar.png"
+    )
+    text = env_path.read_text()
+    assert 'XMPP_AVATAR_PATH="/right/avatar.png"' in text
+    assert "/wrong/avatar.png" not in text
+    assert text.count("XMPP_AVATAR_PATH") == 1
+
+
+def test_append_env_credentials_blank_avatar_keeps_existing(tmp_path):
+    """An empty avatar_path leaves any existing value untouched."""
+    import hermes_xmpp_plugin_common as inst
+
+    env_path = tmp_path / ".env"
+    env_path.write_text('XMPP_AVATAR_PATH="/keep/me.png"\n')
+
+    inst.append_env_credentials(env_path, "bot@x.com", "pw", avatar_path="")
+    assert 'XMPP_AVATAR_PATH="/keep/me.png"' in env_path.read_text()
+
+
+def test_validate_avatar_path(tmp_path):
+    """Blank is valid; a missing or non-file path is rejected with a message."""
+    import hermes_xmpp_plugin_common as inst
+
+    ok, _msg = inst.validate_avatar_path("")
+    assert ok
+
+    ok, msg = inst.validate_avatar_path(str(tmp_path / "nope.png"))
+    assert not ok and "does not exist" in msg
+
+    ok, msg = inst.validate_avatar_path(str(tmp_path))  # a directory
+    assert not ok and "not a file" in msg
+
+    real = tmp_path / "avatar.png"
+    real.write_bytes(b"x")
+    ok, _msg = inst.validate_avatar_path(str(real))
+    assert ok
+
+
 def test_add_default_xmpp_config_allow_all_users():
     """allow_all_users=True writes allow_all_users: true in the default block."""
     result = add_default_xmpp_config("", allow_all_users=True)

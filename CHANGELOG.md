@@ -1,9 +1,34 @@
 # Changelog
 
+## [1.3.6] - 2026-09-14
+
+### Fixed
+- The installer re-prompts for the bot JID and password (with the existing
+  value as the default) instead of only asking when they were missing, so a
+  change can be made on reinstall.
+- A corrected avatar path now overwrites a stale one in `.env`
+  (`append_env_credentials` upserts `XMPP_AVATAR_PATH` instead of skipping
+  when the key already existed, which had silently dropped the corrected
+  value).
+- The installer validates the avatar path (must exist and be a file) and
+  re-asks until a valid path or blank is entered.
+
+### Removed
+- Dropped an unused `hashlib` import in `adapter.py`.
+
+## [1.3.5] - 2026-09-14
+
+### Changed
+- Avatar publishing skips re-publishing an unchanged avatar across gateway
+  restarts by caching a fingerprint (file size + mtime) of the source image in
+  `sessions/avatar_state.json`. The synchronous Pillow processing (open, crop,
+  resize, encode) now runs in a thread via `asyncio.to_thread` so it cannot
+  block the event loop during startup.
+
 ## [1.3.4] - 2026-09-13
 
 ### Changed
-- `scripts/release.sh` pushes only the public remote. It must be run from this clone; the private working copy is a separate clone and must never carry a public remote.
+- `scripts/release.sh` pushes only the remote of the clone it runs in, so it works in either working copy. Each clone must carry only its own forge remote; never add a public remote to the private clone.
 
 
 ## [1.3.3] - 2026-09-13

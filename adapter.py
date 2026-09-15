@@ -1,5 +1,6 @@
 import asyncio
 import io
+import json
 import logging
 import os
 import re
@@ -268,6 +269,9 @@ class XMPPAdapter(BasePlatformAdapter):
         self.typing_indicator = True
         self.avatar_path = os.getenv("XMPP_AVATAR_PATH") or extra.get("avatar_path", "")
         self.home_channel = os.getenv("XMPP_HOME_CHANNEL") or extra.get("home_channel", "")
+        # Fingerprint of the last avatar we successfully published. Used to skip
+        # re-publishing an unchanged avatar on every connect/restart.
+        self._avatar_fingerprint: Optional[str] = None
 
         self._session_started_event = asyncio.Event()
         self.client: Optional[ClientXMPP] = None
@@ -1275,6 +1279,54 @@ class XMPPAdapter(BasePlatformAdapter):
 
     # -- Avatar --------------------------------------------------------------
 
+    def _avatar_state_path(self) -> Path:
+        """Path to the small JSON file caching the last-published avatar fingerprint.
+
+        Lives next to the OMEMO store so it survives gateway restarts. Persisting
+        the fingerprint lets us skip re-publishing an unchanged avatar on every
+        connect instead of pushing it again each time the gateway starts.
+        """
+        try:
+            from hermes_constants import get_hermes_home
+
+            return get_hermes_home() / "sessions" / "avatar_state.json"
+        except Exception:
+            return Path(self.avatar_path).with_suffix(".avatar_state.json")
+
+    def _avatar_fingerprint_of(self, path: Path) -> Optional[str]:
+        """Stable fingerprint of the avatar source file (size + mtime).
+
+        Cheap (a stat, not a full hash) and changes whenever the file is replaced
+        or touched, which is the signal a republish is actually warranted.
+        """
+        try:
+            st = path.stat()
+        except OSError:
+            return None
+        return f"{st.st_size}:{int(st.st_mtime_ns)}"
+
+    def _load_avatar_fingerprint(self) -> Optional[str]:
+        """Read the last-published avatar fingerprint from disk, if present."""
+        try:
+            data = json.loads(self._avatar_state_path().read_text(encoding="utf-8"))
+            if isinstance(data, dict) and data.get("path") == self.avatar_path:
+                return data.get("fingerprint")
+        except Exception:
+            pass
+        return None
+
+    def _save_avatar_fingerprint(self, fingerprint: str) -> None:
+        """Persist the last-published avatar fingerprint across restarts."""
+        try:
+            state_path = self._avatar_state_path()
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            state_path.write_text(
+                json.dumps({"path": self.avatar_path, "fingerprint": fingerprint}),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            logger.debug("XMPP: could not persist avatar fingerprint: %s", exc)
+
     async def _publish_avatar(self) -> None:
         if not self.avatar_path or self.client is None:
             return
@@ -1284,25 +1336,19 @@ class XMPPAdapter(BasePlatformAdapter):
                 logger.warning("XMPP: avatar path does not exist: %s", self.avatar_path)
                 return
 
-            img = Image.open(path)
-            if img.mode in ("RGBA", "P"):
-                img = img.convert("RGB")
+            # Skip the republish when the file has not changed since the last
+            # successful publish (fingerprint persisted across restarts).
+            fingerprint = self._avatar_fingerprint_of(path)
+            if fingerprint is not None and fingerprint == (
+                self._avatar_fingerprint or self._load_avatar_fingerprint()
+            ):
+                logger.info("XMPP: avatar unchanged (%s); skipping republish", fingerprint)
+                self._avatar_fingerprint = fingerprint
+                return
 
-            # Avatars should be square. Crop to center square and resize.
-            width, height = img.size
-            side = min(width, height)
-            left = (width - side) // 2
-            top = (height - side) // 2
-            img = img.crop((left, top, left + side, top + side))
-            try:
-                img = img.resize((480, 480), Image.Resampling.LANCZOS)
-            except AttributeError:
-                # Pillow < 9.1 uses the Image.LANCZOS constant.
-                img = img.resize((480, 480), Image.LANCZOS)
-
-            png_buffer = io.BytesIO()
-            img.save(png_buffer, format="PNG", optimize=True)
-            data = png_buffer.getvalue()
+            # Image processing is blocking CPU work; run it off the event loop so
+            # a large source image cannot stall the gateway loop during startup.
+            data, width, height = await asyncio.to_thread(self._prepare_avatar_bytes, path)
 
             # Always publish vCard avatar (XEP-0153); most clients use this.
             vcard_avatar = self.client.plugin.get("xep_0153", None)
@@ -1312,7 +1358,7 @@ class XMPPAdapter(BasePlatformAdapter):
                         vcard_avatar.set_avatar(avatar=data, mtype="image/png"),
                         timeout=15.0,
                     )
-                    logger.info("XMPP: published vCard avatar (%d bytes, %dx%d)", len(data), img.width, img.height)
+                    logger.info("XMPP: published vCard avatar (%d bytes, %dx%d)", len(data), width, height)
                 except Exception as exc:
                     logger.warning("XMPP: vCard avatar publish failed: %s", exc)
             else:
@@ -1328,16 +1374,47 @@ class XMPPAdapter(BasePlatformAdapter):
                         "id": avatar_id,
                         "type": "image/png",
                         "bytes": len(data),
-                        "width": img.width,
-                        "height": img.height,
+                        "width": width,
+                        "height": height,
                     }), timeout=5.0)
-                    logger.info("XMPP: published PEP avatar id=%s (%d bytes, %dx%d)", avatar_id[:16], len(data), img.width, img.height)
+                    logger.info("XMPP: published PEP avatar id=%s (%d bytes, %dx%d)", avatar_id[:16], len(data), width, height)
                 except Exception as exc:
                     logger.warning("XMPP: PEP avatar publish failed: %s", exc)
             else:
                 logger.debug("XMPP: xep_0084 plugin not available")
+
+            # Record success so the next restart skips the unchanged republish.
+            if fingerprint is not None:
+                self._avatar_fingerprint = fingerprint
+                self._save_avatar_fingerprint(fingerprint)
         except Exception as exc:
             logger.warning("XMPP: failed to publish avatar: %s", exc, exc_info=True)
+
+    def _prepare_avatar_bytes(self, path: Path):
+        """Open, crop, resize, and PNG-encode the avatar (blocking; run off-loop).
+
+        Returns (png_bytes, width, height). Runs inside asyncio.to_thread so the
+        synchronous PIL work never blocks the gateway event loop.
+        """
+        img = Image.open(path)
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+
+        # Avatars should be square. Crop to center square and resize.
+        width, height = img.size
+        side = min(width, height)
+        left = (width - side) // 2
+        top = (height - side) // 2
+        img = img.crop((left, top, left + side, top + side))
+        try:
+            img = img.resize((480, 480), Image.Resampling.LANCZOS)
+        except AttributeError:
+            # Pillow < 9.1 uses the Image.LANCZOS constant.
+            img = img.resize((480, 480), Image.LANCZOS)
+
+        png_buffer = io.BytesIO()
+        img.save(png_buffer, format="PNG", optimize=True)
+        return png_buffer.getvalue(), img.width, img.height
 
     # -- Receiving -----------------------------------------------------------
 
