@@ -39,51 +39,49 @@ This repository IS a Hermes plugin: the plugin manifest (`plugin.yaml`), the ada
 
 ## Installation
 
-One command, using the Hermes plugin installer:
+Installation is three steps: install the plugin, run post-install, then restart the gateway.
+
+### 1. Install the plugin
 
 ```bash
 hermes plugins install rebelcommand/hermes-xmpp-plugin --enable
 hermes plugins enable xmpp-platform   # only if you installed without --enable
 ```
 
-The installer clones the repository into a temporary directory, copies the plugin into your Hermes home (`~/.hermes/plugins/xmpp-platform/`), runs its security scan, prompts for the required environment variables, and removes the temporary clone. You never keep a working copy of this repository.
+The installer clones the repository into a temporary directory, copies the plugin into your Hermes home (`~/.hermes/plugins/xmpp-platform/`), runs its security scan, and removes the temporary clone. You never keep a working copy of this repository.
 
-When prompted, provide:
-
-- `XMPP_USER_JID`: the bot's XMPP address, for example `hermes@example.com`
-- `XMPP_PASSWORD`: the bot account password
-
-Both are written to `~/.hermes/.env` (secrets stay out of `config.yaml`).
-
-Then finish setup and restart the gateway:
+### 2. Run post-install
 
 ```bash
 python3 ~/.hermes/plugins/xmpp-platform/post_install.py
-hermes gateway restart
 ```
 
 `post_install.py` completes what the core installer intentionally leaves alone:
 
-1. Adds the default `platforms.xmpp` block (OMEMO on by default) and the voice/STT defaults to `config.yaml`, after backing the file up.
-2. Ensures the plugin's Python dependencies are importable (installing any that are missing into the plugin's own `deps/` directory, never into an externally-managed Python; if they are already present in the Hermes environment it changes nothing).
-3. Prompts for the allowed-users allowlist (deny-all by default) and the optional home channel, writing them to `.env`.
+1. Installs the plugin's Python dependencies into the plugin's own `deps/` directory (never into an externally-managed Python), skipping any that are already importable.
+2. Adds the default `platforms.xmpp` block (OMEMO on by default) and the voice/STT defaults to `config.yaml`, after backing the file up.
+3. Prompts for the bot's XMPP JID and password (existing values are shown as defaults, so press Enter to keep them or type to change them), the allowed-users allowlist (deny-all by default), and an optional avatar path.
+4. Writes the credentials, allowlist, home channel, and avatar path to `~/.hermes/.env` (secrets stay out of `config.yaml`).
 
 It is safe to re-run: existing `.env` values win, config defaults are only added when missing, and satisfied dependencies are skipped.
 
+### 3. Restart the gateway
+
+```bash
+hermes gateway restart
+```
+
 ### Installing into a specific profile
 
-Hermes profiles are independent. Install into the profile you want the bot in:
+Hermes profiles are independent. Install into the profile you want the bot in, running post-install against that profile before restarting:
 
 ```bash
 hermes -p my-bot plugins install rebelcommand/hermes-xmpp-plugin --enable
+python3 ~/.hermes/plugins/xmpp-platform/post_install.py --profile my-bot
 hermes -p my-bot gateway restart
 ```
 
-Post-install reads the active profile's config and `.env`; pass `--profile my-bot` (or `--hermes-home`) if you want it explicit:
-
-```bash
-python3 ~/.hermes/plugins/xmpp-platform/post_install.py --profile my-bot
-```
+Post-install reads the active profile's config and `.env`; pass `--profile my-bot` (or `--hermes-home`) if you want it explicit.
 
 ### Non-interactive installation
 
@@ -261,7 +259,7 @@ Your `config.yaml` and `.env` entries are left in place; delete the `platforms.x
 
 ## Streaming Behavior
 
-XMPP has no message-editing transport, so the plugin declares `SUPPORTS_MESSAGE_EDITING = False`. The gateway then delivers each reply as exactly one message instead of attempting streamed edits (which on a non-editable platform produces a partial preview followed by a duplicate final message). Tool progress, commentary, typing indicators, and voice replies are unaffected; they use separate delivery paths.
+XMPP's only edit primitive is XEP-0308 "Last Message Correction", a one-shot replace of the immediately previous message that cannot express the gateway's incremental streamed-edit model (and isn't wired into slixmpp's delivery path). The plugin therefore declares `SUPPORTS_MESSAGE_EDITING = False`, the same gate the WeChat, Signal, BlueBubbles, QQ, Photon, and WeCom adapters use for the same reason. The gateway then delivers each reply as exactly one message instead of attempting streamed edits (which on a platform without an edit API produces a partial preview followed by a duplicate final message). Tool progress, commentary, typing indicators, and voice replies are unaffected; they use separate delivery paths.
 
 ## Development
 

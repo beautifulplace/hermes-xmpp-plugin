@@ -8,13 +8,13 @@ what that command intentionally does not do:
     directory, never touches externally-managed Pythons, PEP 668, uv, etc.)
   * add the default ``platforms.xmpp`` block (OMEMO on by default) and the
     voice/STT defaults to config.yaml
-  * prompt for the allowed-users allowlist (deny-all by default) and the
-    optional home channel
-  * write XMPP credentials and allowlist into the profile .env
+  * prompt for the bot JID and password, the allowed-users allowlist
+    (deny-all by default), and an optional avatar path
+  * write XMPP credentials, allowlist, home channel, and avatar path into the
+    profile .env
 
-The canonical installer (``python3 install_xmpp_plugin.py`` from a clone)
-already does all of this; this script exists for the
-``hermes plugins install <url>`` route, which only copies plugin files.
+This is the ONLY installer step beyond the native ``hermes plugins install``
+command; run it, then restart the gateway.
 
 Usage:
     python3 post_install.py [options]
@@ -65,17 +65,29 @@ def fail(message: str) -> NoReturn:
 
 
 def install_dependencies(python: Path, plugin_dir: Path) -> None:
-    """Ensure plugin dependencies are importable by the gateway."""
+    """Ensure plugin dependencies are importable by the gateway.
+
+    The gateway imports vendored deps from ``plugin_dir/deps`` (added to
+    ``sys.path`` by the plugin ``__init__.py``), NOT from the interpreter's
+    site-packages. So the correct "already satisfied" check is whether the
+    dependency is importable with ``deps`` prepended to ``sys.path``; probing
+    the bare venv python always finds them missing and re-downloads the whole
+    81 MB tree on every re-run. Only deps missing from ``deps/`` are installed.
+    """
     deps_dir = plugin_dir / "deps"
     deps_dir.mkdir(parents=True, exist_ok=True)
 
     to_install = []
     for pip_name, import_name in DEPENDENCIES:
+        probe = (
+            f"import sys; sys.path.insert(0, {str(deps_dir)!r}); "
+            f"import {import_name}"
+        )
         try:
             import subprocess
 
             subprocess.run(
-                [str(python), "-c", f"import {import_name}"],
+                [str(python), "-c", probe],
                 check=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -193,29 +205,11 @@ def main(argv=None) -> int:
         print(f"Backed up config to {backup_path}")
     enable_plugin_in_config(config_path, add_defaults=True, allow_all_users=args.allow_all_users)
 
-    # 3. Allowlist / credentials in .env
-    allowed_users = normalize_allowed_users(args.allowed_users or "")
-    allow_all = bool(args.allow_all_users)
-    if not allowed_users and not allow_all and not args.non_interactive:
-        raw = input("Allowed XMPP users (comma-separated JIDs, blank = deny all): ").strip()
-        allowed_users = normalize_allowed_users(raw)
-        if not allowed_users:
-            answer = input("Allow ALL users to talk to this agent? [y/N]: ").strip().lower()
-            allow_all = answer in ("y", "yes")
-    elif not allowed_users and not allow_all and args.non_interactive:
-        # Explicit non-interactive deny-all: keep any stale allow-all flag in
-        # check by writing false (append_env_credentials handles it).
-        pass
-
-    home_channel = ""
-    if args.home_channel:
-        home_channel = args.home_channel.strip()
-    elif allowed_users:
-        home_channel = allowed_users.split(",")[0].strip()
-
-    # JID/password: prompt with the existing value as the default so the user
-    # can keep it (Enter) or change it. Only skipped under --non-interactive.
+    # 3. Credentials, allowlist, avatar in .env
     existing = _load_env_credentials(env_path)
+
+    # JID/password first: prompt with the existing value as the default so the
+    # user can keep it (Enter) or change it. Only skipped under --non-interactive.
     jid = existing.get("XMPP_USER_JID", "")
     password = existing.get("XMPP_PASSWORD", "")
     if not args.non_interactive:
@@ -239,6 +233,36 @@ def main(argv=None) -> int:
             "WARNING: XMPP_USER_JID / XMPP_PASSWORD are not both set in "
             f"{env_path}. Set them manually or the adapter cannot connect."
         )
+
+    # Allowed users: at least one is REQUIRED (the bot is unusable without a
+    # sender allowlist, exactly like the JID/password). The existing allowlist
+    # is shown as the default and Enter keeps it.
+    allowed_users = normalize_allowed_users(args.allowed_users or "")
+    allow_all = bool(args.allow_all_users)
+    if not allowed_users and not allow_all and not args.non_interactive:
+        existing_allowed = existing.get("XMPP_ALLOWED_USERS", "")
+        prompt = (
+            f"Allowed XMPP users (comma-separated JIDs) [{existing_allowed}]: "
+            if existing_allowed
+            else "Allowed XMPP users (comma-separated JIDs): "
+        )
+        raw = input(prompt).strip()
+        allowed_users = normalize_allowed_users(raw or existing_allowed)
+        while not allowed_users:
+            print("At least one allowed user is required.")
+            raw = input("Allowed XMPP users (comma-separated JIDs): ").strip()
+            allowed_users = normalize_allowed_users(raw)
+    elif not allowed_users and not allow_all and args.non_interactive:
+        fail(
+            "No allowed users: pass --allowed-users or --allow-all-users "
+            "(the bot is unusable without at least one allowed sender)."
+        )
+
+    home_channel = ""
+    if args.home_channel:
+        home_channel = args.home_channel.strip()
+    elif allowed_users:
+        home_channel = allowed_users.split(",")[0].strip()
 
     avatar_path = existing.get("XMPP_AVATAR_PATH", "")
     if not args.non_interactive:

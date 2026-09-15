@@ -1,8 +1,8 @@
 # XMPP plugin installed
 
-Two more steps, then restart the gateway.
+Two more steps to finish the install.
 
-1. Finish setup (dependencies, default config, allowlist, home channel):
+1. Finish setup (dependencies, default config, credentials, allowlist, home channel):
 
    ```
    python3 ~/.hermes/plugins/xmpp-platform/post_install.py

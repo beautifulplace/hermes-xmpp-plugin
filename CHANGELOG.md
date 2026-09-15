@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.7] - 2026-09-14
+
+### Fixed
+- `post_install.py` no longer re-downloads the full dependency tree on every
+  run: it probes each dependency with the plugin's vendored `deps/` on
+  `sys.path` (the way the gateway actually imports them) instead of against
+  the bare venv, so satisfied dependencies are skipped.
+- JID and password are prompted before the allowed-users allowlist.
+- The allowed-users prompt shows the existing allowlist as the default and
+  Enter keeps it; at least one allowed user is now required (the bot is
+  unusable without one), and the non-interactive path fails instead of
+  silently writing deny-all.
+
 ## [1.3.6] - 2026-09-14
 
 ### Fixed
